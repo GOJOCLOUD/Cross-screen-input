@@ -9,7 +9,6 @@
     "start": "node start-dev.cjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:win": "electron-builder --win --x64",
     "dist:mac": "electron-builder --mac --arm64",
     "dist:mac:arm64": "electron-builder --mac --arm64",
     "dist:mac:x64": "electron-builder --mac --x64"
@@ -43,22 +42,6 @@
         ]
       }
     ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
     "mac": {
       "target": [
         {
@@ -69,7 +52,7 @@
           ]
         },
         {
-          "target": "zip",
+          "target": "pkg",
           "arch": [
             "arm64",
             "x64"
@@ -77,13 +60,6 @@
         }
       ],
       "category": "public.app-category.utilities"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "shortcutName": "${productName}",
-      "deleteAppDataOnUninstall": true,
-      "include": "uninstaller.nsh"
     }
   }
 }
