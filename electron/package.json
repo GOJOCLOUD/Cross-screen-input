@@ -10,7 +10,9 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win --x64",
-    "dist:mac": "electron-builder --mac --universal"
+    "dist:mac": "electron-builder --mac dmg zip --arm64",
+    "dist:mac:arm64": "electron-builder --mac dmg zip --arm64",
+    "dist:mac:x64": "electron-builder --mac dmg zip --x64"
   },
   "dependencies": {
     "tree-kill": "^1.2.2"
@@ -62,18 +64,19 @@
         {
           "target": "dmg",
           "arch": [
-            "universal"
+            "arm64",
+            "x64"
           ]
         },
         {
           "target": "zip",
           "arch": [
-            "universal"
+            "arm64",
+            "x64"
           ]
         }
       ],
-      "category": "public.app-category.utilities",
-      "x64ArchFiles": "**/Resources/backend/kpsr-backend"
+      "category": "public.app-category.utilities"
     },
     "nsis": {
       "oneClick": false,

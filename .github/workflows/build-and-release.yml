@@ -1,6 +1,7 @@
 # 1) PyInstaller 打包后端为 kpsr-backend.exe
 # 2) Electron + electron-builder 生成 Windows 安装包与便携版
-# 推 tag v* 时发布 Release（ZIP 内含两个 .exe）
+# 3) macOS：Apple Silicon 与 Intel 分 Runner / 分包构建（完整 uvicorn[standard] 依赖，无 universal2 裁剪）
+# 推 tag v* 时发布 Release；mac 开发包见 dev-latest-macos（ZIP 内含 arm64 / x64 两目录）
 
 name: Build Electron (Windows / macOS)
 
@@ -13,7 +14,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: windows-electron-${{ github.workflow }}-${{ github.ref }}
+  group: electron-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -292,7 +293,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-macos-electron:
+  # 分发级 macOS：在对应架构 Runner 上分别打 PyInstaller + Electron，避免 universal2 + exclude 模块妥协。
+  build-macos-electron-arm64:
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -316,23 +318,18 @@ jobs:
           pip install -r hotspot/backend/requirements.txt
           pip install "pyinstaller>=6.0"
 
-      - name: Build backend binary (PyInstaller onefile)
+      - name: Build backend (PyInstaller onefile, host arch)
         shell: bash
         env:
           PYTHONUTF8: "1"
         run: |
           cd hotspot/backend
           name="${BACKEND_EXE_NAME}"
-
           pyinstaller \
             --onefile \
             --noconfirm \
             --clean \
-            --target-architecture universal2 \
             --name "${name}" \
-            --exclude-module watchfiles \
-            --exclude-module uvloop \
-            --exclude-module websockets.speedups \
             --hidden-import uvicorn \
             --hidden-import uvicorn.logging \
             --hidden-import uvicorn.loops \
@@ -378,6 +375,7 @@ jobs:
             exit 1
           fi
           chmod +x "${bin}"
+          file "${bin}"
           ls -lh "${bin}"
 
       - name: Stage backend for Electron
@@ -388,6 +386,14 @@ jobs:
           cp -f "hotspot/backend/dist/${BACKEND_EXE_NAME}" "${dest_dir}/kpsr-backend"
           rm -f "${dest_dir}/.gitkeep"
           ls -la "${dest_dir}"
+
+      - name: Prepare app icon for Electron
+        shell: bash
+        run: |
+          mkdir -p electron/build
+          if [[ -f hotspot/images/AppIcon.iconset/icon_256x256.png ]]; then
+            cp -f hotspot/images/AppIcon.iconset/icon_256x256.png electron/build/icon.png
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -401,62 +407,241 @@ jobs:
         working-directory: electron
         run: npm install
 
-      - name: Build Electron (DMG + ZIP)
+      - name: Build Electron (dmg + zip, arm64)
         shell: bash
         working-directory: electron
-        run: npm run dist:mac
+        run: npm run dist:mac:arm64
 
       - name: List Electron dist
         shell: bash
         working-directory: electron
         run: ls -la dist
 
-      - name: Package macOS release ZIP
+      - name: Collect arm64 distributables
         shell: bash
         run: |
+          mkdir -p upload
+          shopt -s nullglob
+          for f in electron/dist/*.dmg electron/dist/*.zip; do
+            [[ "$f" == *blockmap* ]] && continue
+            cp -f "$f" upload/
+          done
+          ls -la upload
+
+      - name: Upload partial (arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-partial-arm64
+          path: upload/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos-electron-x64:
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: hotspot/backend/requirements.txt
+
+      - name: Install Python deps + PyInstaller
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r hotspot/backend/requirements.txt
+          pip install "pyinstaller>=6.0"
+
+      - name: Build backend (PyInstaller onefile, host arch)
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          cd hotspot/backend
+          name="${BACKEND_EXE_NAME}"
+          pyinstaller \
+            --onefile \
+            --noconfirm \
+            --clean \
+            --name "${name}" \
+            --hidden-import uvicorn \
+            --hidden-import uvicorn.logging \
+            --hidden-import uvicorn.loops \
+            --hidden-import uvicorn.loops.auto \
+            --hidden-import uvicorn.protocols \
+            --hidden-import uvicorn.protocols.http \
+            --hidden-import uvicorn.protocols.http.auto \
+            --hidden-import uvicorn.protocols.websockets \
+            --hidden-import uvicorn.protocols.websockets.auto \
+            --hidden-import pydantic \
+            --hidden-import pydantic_settings \
+            --hidden-import pydantic_core \
+            --hidden-import fastapi \
+            --hidden-import starlette \
+            --hidden-import pynput \
+            --hidden-import pynput.keyboard \
+            --hidden-import pynput.mouse \
+            --hidden-import pyperclip \
+            --hidden-import PIL \
+            --hidden-import psutil \
+            --hidden-import websockets \
+            --hidden-import websockets.legacy \
+            --hidden-import websockets.legacy.server \
+            --hidden-import websockets.legacy.client \
+            --hidden-import python_multipart \
+            --collect-all pynput \
+            --collect-all fastapi \
+            --collect-all starlette \
+            --collect-all uvicorn \
+            --add-data "../frontend:frontend" \
+            --add-data "data:data" \
+            --add-data "routes:routes" \
+            --add-data "utils:utils" \
+            --add-data "config.py:." \
+            main.py
+
+      - name: Verify backend binary
+        shell: bash
+        run: |
+          bin="hotspot/backend/dist/${BACKEND_EXE_NAME}"
+          if [ ! -f "${bin}" ]; then
+            echo "Backend binary not found: ${bin}"
+            exit 1
+          fi
+          chmod +x "${bin}"
+          file "${bin}"
+          ls -lh "${bin}"
+
+      - name: Stage backend for Electron
+        shell: bash
+        run: |
+          dest_dir="electron/resources/backend"
+          mkdir -p "${dest_dir}"
+          cp -f "hotspot/backend/dist/${BACKEND_EXE_NAME}" "${dest_dir}/kpsr-backend"
+          rm -f "${dest_dir}/.gitkeep"
+          ls -la "${dest_dir}"
+
+      - name: Prepare app icon for Electron
+        shell: bash
+        run: |
+          mkdir -p electron/build
+          if [[ -f hotspot/images/AppIcon.iconset/icon_256x256.png ]]; then
+            cp -f hotspot/images/AppIcon.iconset/icon_256x256.png electron/build/icon.png
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: electron/package.json
+
+      - name: Install Electron dependencies
+        shell: bash
+        working-directory: electron
+        run: npm install
+
+      - name: Build Electron (dmg + zip, x64)
+        shell: bash
+        working-directory: electron
+        run: npm run dist:mac:x64
+
+      - name: List Electron dist
+        shell: bash
+        working-directory: electron
+        run: ls -la dist
+
+      - name: Collect x64 distributables
+        shell: bash
+        run: |
+          mkdir -p upload
+          shopt -s nullglob
+          for f in electron/dist/*.dmg electron/dist/*.zip; do
+            [[ "$f" == *blockmap* ]] && continue
+            cp -f "$f" upload/
+          done
+          ls -la upload
+
+      - name: Upload partial (x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-partial-x64
+          path: upload/*
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-electron-release:
+    needs: [build-macos-electron-arm64, build-macos-electron-x64]
+    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download arm64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-partial-arm64
+          path: dl/arm64
+
+      - name: Download x64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-partial-x64
+          path: dl/x64
+
+      - name: Assemble distribution zip
+        shell: bash
+        run: |
+          set -euo pipefail
           ref="${GITHUB_REF}"
           if [[ "${ref}" =~ ^refs/tags/v(.+)$ ]]; then
             version="${BASH_REMATCH[1]}"
             folder="KPSR跨屏输入-Electron-macOS-v${version}"
-            zip="${folder}.zip"
+            zip="KPSR跨屏输入-Electron-macOS-v${version}.zip"
           else
             version="dev (commit ${GITHUB_SHA:0:7})"
             folder="KPSR跨屏输入-Electron-macOS-dev"
             zip="KPSR跨屏输入-Electron-macOS-dev.zip"
           fi
+          mkdir -p "${folder}/arm64-Apple-Silicon" "${folder}/x64-Intel"
+          if ! compgen -G "dl/arm64/*" > /dev/null; then
+            echo "missing arm64 artifacts"; ls -la dl/arm64 || true; exit 1
+          fi
+          if ! compgen -G "dl/x64/*" > /dev/null; then
+            echo "missing x64 artifacts"; ls -la dl/x64 || true; exit 1
+          fi
+          cp -f dl/arm64/* "${folder}/arm64-Apple-Silicon/"
+          cp -f dl/x64/* "${folder}/x64-Intel/"
+          cat > "${folder}/使用说明.txt" << EOF
+          KPSR 跨屏输入 · macOS 分发包（Apple Silicon 与 Intel 分架构）
 
-          mkdir -p "${folder}"
-          shopt -s nullglob
-          for f in electron/dist/*.dmg electron/dist/*.zip; do
-            cp -f "$f" "${folder}/"
-          done
+          请按芯片只使用对应目录中的安装包（勿混用）：
+          - arm64-Apple-Silicon：Apple M 系列等 Apple 芯片 Mac
+          - x64-Intel：Intel 芯片 Mac
 
-          cat > "${folder}/使用说明.txt" <<EOF
-          KPSR 跨屏输入 - Electron 桌面版（macOS）
+          目录内 .dmg 为磁盘映像安装包（若有 .zip 则为便携压缩包）。
+          安装或解压后启动应用；电脑端会打开本机页面（默认 http://127.0.0.1:2345）；
+          手机请与电脑同一 Wi-Fi，浏览器访问 http://<电脑局域网 IP>:2345/phone
 
-          包含文件
-          - .dmg：安装包
-          - .zip：便携包（首次打开可能需要系统授权）
-
-          使用
-          1. 下载后解压/安装并打开应用
-          2. 启动后自动打开桌面窗口（本机 http://127.0.0.1:2345）
-          3. 手机与电脑同一 WiFi 时，浏览器打开 http://<电脑局域网IP>:2345/phone
-
-          说明
-          - 首次启动可能需授权「辅助功能」（系统设置 -> 隐私与安全性）
-          - 如出现“来自未识别开发者”提示，可在系统设置中手动允许运行（签名公证完成后将优化）
+          系统可能要求「辅助功能」等权限；未公证版本首次打开可能被拦截，需在系统设置中允许。
 
           版本: ${version}
           提交: ${GITHUB_SHA:0:7}
           EOF
-
-          ditto -c -k --sequesterRsrc --keepParent "${folder}" "${zip}"
+          zip -r -q "${zip}" "${folder}"
+          ls -la "${folder}"
           echo "Created ${zip}"
-          {
-            echo "MAC_ELECTRON_ZIP=${zip}"
-            echo "PKG_VERSION=${version}"
-          } >> "${GITHUB_ENV}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -474,16 +659,13 @@ jobs:
           name: KPSR 跨屏输入（Electron） ${{ github.ref_name }}
           overwrite: true
           body: |
-            ## macOS · Electron 桌面版
+            ## macOS · Electron（Apple Silicon + Intel 分包）
 
             下载 **ZIP**，内含：
-            - **DMG 安装包**
-            - **ZIP 便携包**
+            - **arm64-Apple-Silicon**：Apple 芯片 Mac
+            - **x64-Intel**：Intel Mac
 
-            启动后为独立桌面窗口，内置后端，无需单独安装 Python。
-
-            - 电脑端界面：由应用窗口打开（`http://127.0.0.1:2345`）
-            - 手机端：同局域网浏览器访问 `http://<电脑IP>:2345/phone`
+            请选择与电脑芯片匹配的目录内 DMG/ZIP。内置对应架构后端，无需单独安装 Python。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -510,11 +692,9 @@ jobs:
           overwrite: true
           files: KPSR跨屏输入-Electron-macOS-dev.zip
           body: |
-            每次推送到 **main** 自动更新 macOS 开发版附件（固定文件名 `KPSR跨屏输入-Electron-macOS-dev.zip`）。
+            ZIP 内含 **arm64-Apple-Silicon** 与 **x64-Intel** 两套产物，分发时请让用户按芯片择一安装。
 
-            - 与正式版流程一致，但未签名公证，首次打开可能需要手动允许。
-            - 电脑端窗口打开本地服务：`http://127.0.0.1:2345`
-            - 手机端：`http://<电脑IP>:2345/phone`
-            - Windows 开发版见预发布 **dev-latest-win**（本仓库若为 Mac 专用则仅构建 macOS）。
+            - 未公证 build 首次打开可能被 macOS 拦截
+            - Windows 开发版见 **dev-latest-win**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
