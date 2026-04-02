@@ -9,8 +9,8 @@
     "start": "node start-dev.cjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac --arm64",
-    "dist:mac:arm64": "electron-builder --mac --arm64"
+    "dist:mac": "electron-builder --mac --arm64 --dir",
+    "dist:mac:arm64": "electron-builder --mac --arm64 --dir"
   },
   "dependencies": {
     "tree-kill": "^1.2.2"
@@ -44,29 +44,14 @@
     "mac": {
       "target": [
         {
-          "target": "dmg",
+          "target": "dir",
           "arch": [
             "arm64"
           ]
         }
       ],
-      "category": "public.app-category.utilities"
-    },
-    "dmg": {
-      "iconSize": 102,
-      "contents": [
-        {
-          "x": 140,
-          "y": 220,
-          "type": "file"
-        },
-        {
-          "x": 400,
-          "y": 220,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ]
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns"
     }
   }
 }

@@ -119,18 +119,51 @@ jobs:
           cp -f "${bin}" electron/resources/backend/kpsr-backend
           rm -f electron/resources/backend/.gitkeep
 
+      - name: Prepare non-infringing app icon (80% scale)
+        shell: bash
+        run: |
+          mkdir -p electron/build
+          src="hotspot/images/app-icon-1080x1080.png"
+          test -f "${src}"
+          python3 - <<'PY'
+          from PIL import Image
+          src = Image.open("hotspot/images/app-icon-1080x1080.png").convert("RGBA")
+          canvas_size = 1024
+          scaled_size = int(canvas_size * 0.8)  # 80%
+          scaled = src.resize((scaled_size, scaled_size), Image.LANCZOS)
+          canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+          offset = ((canvas_size - scaled_size) // 2, (canvas_size - scaled_size) // 2)
+          canvas.paste(scaled, offset, scaled)
+          canvas.save("electron/build/icon-base-1024.png")
+          PY
+          iconset="electron/build/icon.iconset"
+          rm -rf "${iconset}"
+          mkdir -p "${iconset}"
+          sips -z 16 16   electron/build/icon-base-1024.png --out "${iconset}/icon_16x16.png" >/dev/null
+          sips -z 32 32   electron/build/icon-base-1024.png --out "${iconset}/icon_16x16@2x.png" >/dev/null
+          sips -z 32 32   electron/build/icon-base-1024.png --out "${iconset}/icon_32x32.png" >/dev/null
+          sips -z 64 64   electron/build/icon-base-1024.png --out "${iconset}/icon_32x32@2x.png" >/dev/null
+          sips -z 128 128 electron/build/icon-base-1024.png --out "${iconset}/icon_128x128.png" >/dev/null
+          sips -z 256 256 electron/build/icon-base-1024.png --out "${iconset}/icon_128x128@2x.png" >/dev/null
+          sips -z 256 256 electron/build/icon-base-1024.png --out "${iconset}/icon_256x256.png" >/dev/null
+          sips -z 512 512 electron/build/icon-base-1024.png --out "${iconset}/icon_256x256@2x.png" >/dev/null
+          sips -z 512 512 electron/build/icon-base-1024.png --out "${iconset}/icon_512x512.png" >/dev/null
+          cp electron/build/icon-base-1024.png "${iconset}/icon_512x512@2x.png"
+          iconutil -c icns "${iconset}" -o electron/build/icon.icns
+          ls -la electron/build
+
       - name: Install Electron deps
         shell: bash
         working-directory: electron
         run: npm install
 
-      - name: Build Electron dmg/pkg (arm64 only, unsigned for main/pr)
-        if: "!startsWith(github.ref, 'refs/tags/v')"
+      - name: Build Electron app (arm64 only, unsigned for main/pr)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         shell: bash
         working-directory: electron
         run: npm run dist:mac:arm64 -- --config.mac.identity=null
 
-      - name: Build Electron dmg/pkg (arm64 only, signed for tags)
+      - name: Build Electron app (arm64 only, signed for tags)
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         working-directory: electron
@@ -142,14 +175,13 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: npm run dist:mac:arm64
 
-      - name: Collect arm64 packages
+      - name: Collect arm64 app bundle zip
         shell: bash
         run: |
           mkdir -p out/arm64
-          shopt -s nullglob
-          for f in electron/dist/*.dmg; do
-            cp -f "$f" out/arm64/
-          done
+          app_path="electron/dist/mac-arm64/跨屏输入.app"
+          test -d "${app_path}"
+          ditto -c -k --sequesterRsrc --keepParent "${app_path}" "out/arm64/跨屏输入-arm64.app.zip"
           ls -la out/arm64
 
       - name: Upload arm64 artifact
@@ -178,7 +210,7 @@ jobs:
         shell: bash
         run: |
           ls -la publish/arm64
-          compgen -G "publish/arm64/*.dmg" > /dev/null
+          compgen -G "publish/arm64/*.app.zip" > /dev/null
 
       - name: Move dev-latest-macos tag to current commit (main only)
         if: github.ref == 'refs/heads/main'
@@ -202,11 +234,11 @@ jobs:
           make_latest: false
           overwrite: true
           files: |
-            publish/arm64/*.dmg
+            publish/arm64/*.app.zip
           body: |
             macOS 开发版（仅 Apple Silicon / arm64）：
             - arm64: Apple Silicon
-            请下载对应 DMG 安装包。
+            下载 `.app.zip` 后解压，将 `跨屏输入.app` 拖到桌面后再自签名测试。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -216,10 +248,10 @@ jobs:
         with:
           name: KPSR 跨屏输入（macOS）${{ github.ref_name }}
           files: |
-            publish/arm64/*.dmg
+            publish/arm64/*.app.zip
           overwrite: true
           body: |
-            macOS 安装包（仅 Apple Silicon / arm64）：
-            - arm64（Apple Silicon）：DMG
+            macOS 应用包（仅 Apple Silicon / arm64）：
+            - arm64（Apple Silicon）：`.app.zip`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
