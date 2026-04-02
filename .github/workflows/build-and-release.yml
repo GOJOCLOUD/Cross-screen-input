@@ -332,6 +332,7 @@ jobs:
             --name "${name}" \
             --exclude-module watchfiles \
             --exclude-module uvloop \
+            --exclude-module websockets.speedups \
             --hidden-import uvicorn \
             --hidden-import uvicorn.logging \
             --hidden-import uvicorn.loops \
