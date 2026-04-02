@@ -328,6 +328,7 @@ jobs:
             --onefile \
             --noconfirm \
             --clean \
+            --target-architecture universal2 \
             --name "${name}" \
             --hidden-import uvicorn \
             --hidden-import uvicorn.logging \
