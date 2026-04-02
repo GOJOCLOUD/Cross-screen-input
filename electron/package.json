@@ -48,19 +48,12 @@
           "arch": [
             "arm64"
           ]
-        },
-        {
-          "target": "pkg",
-          "arch": [
-            "arm64"
-          ]
         }
       ],
-      "category": "public.app-category.utilities",
-      "icon": "build/icon.icns"
+      "category": "public.app-category.utilities"
     },
     "dmg": {
-      "iconSize": 96,
+      "iconSize": 102,
       "contents": [
         {
           "x": 140,

@@ -119,19 +119,6 @@ jobs:
           cp -f "${bin}" electron/resources/backend/kpsr-backend
           rm -f electron/resources/backend/.gitkeep
 
-      - name: Prepare icon
-        shell: bash
-        run: |
-          mkdir -p electron/build
-          # electron-builder 在 macOS 需要至少 512x512 的 icon.png
-          if [[ -f hotspot/images/AppIcon.iconset/icon_512x512.png ]]; then
-            cp -f hotspot/images/AppIcon.iconset/icon_512x512.png electron/build/icon.png
-          fi
-          # 为 app/pkg 提供 icns 图标
-          if [[ -f hotspot/images/AppIcon.icns ]]; then
-            cp -f hotspot/images/AppIcon.icns electron/build/icon.icns
-          fi
-
       - name: Install Electron deps
         shell: bash
         working-directory: electron
@@ -160,7 +147,7 @@ jobs:
         run: |
           mkdir -p out/arm64
           shopt -s nullglob
-          for f in electron/dist/*.dmg electron/dist/*.pkg; do
+          for f in electron/dist/*.dmg; do
             cp -f "$f" out/arm64/
           done
           ls -la out/arm64
@@ -192,7 +179,6 @@ jobs:
         run: |
           ls -la publish/arm64
           compgen -G "publish/arm64/*.dmg" > /dev/null
-          compgen -G "publish/arm64/*.pkg" > /dev/null
 
       - name: Move dev-latest-macos tag to current commit (main only)
         if: github.ref == 'refs/heads/main'
@@ -217,11 +203,10 @@ jobs:
           overwrite: true
           files: |
             publish/arm64/*.dmg
-            publish/arm64/*.pkg
           body: |
             macOS 开发版（仅 Apple Silicon / arm64）：
             - arm64: Apple Silicon
-            请下载对应 DMG/PKG 安装包。
+            请下载对应 DMG 安装包。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -232,10 +217,9 @@ jobs:
           name: KPSR 跨屏输入（macOS）${{ github.ref_name }}
           files: |
             publish/arm64/*.dmg
-            publish/arm64/*.pkg
           overwrite: true
           body: |
             macOS 安装包（仅 Apple Silicon / arm64）：
-            - arm64（Apple Silicon）：DMG + PKG
+            - arm64（Apple Silicon）：DMG
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
