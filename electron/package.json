@@ -10,9 +10,9 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win --x64",
-    "dist:mac": "electron-builder --mac dmg zip --arm64",
-    "dist:mac:arm64": "electron-builder --mac dmg zip --arm64",
-    "dist:mac:x64": "electron-builder --mac dmg zip --x64"
+    "dist:mac": "electron-builder --mac --arm64",
+    "dist:mac:arm64": "electron-builder --mac --arm64",
+    "dist:mac:x64": "electron-builder --mac --x64"
   },
   "dependencies": {
     "tree-kill": "^1.2.2"
