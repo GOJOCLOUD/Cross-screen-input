@@ -127,6 +127,10 @@ jobs:
           if [[ -f hotspot/images/AppIcon.iconset/icon_512x512.png ]]; then
             cp -f hotspot/images/AppIcon.iconset/icon_512x512.png electron/build/icon.png
           fi
+          # 为 app/pkg 提供 icns 图标
+          if [[ -f hotspot/images/AppIcon.icns ]]; then
+            cp -f hotspot/images/AppIcon.icns electron/build/icon.icns
+          fi
 
       - name: Install Electron deps
         shell: bash

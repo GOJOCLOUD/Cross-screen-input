@@ -21,7 +21,7 @@
   },
   "build": {
     "appId": "com.gojocloud.crossscreeninput",
-    "productName": "KPSR跨屏输入",
+    "productName": "跨屏输入",
     "asar": true,
     "directories": {
       "output": "dist",
@@ -56,7 +56,24 @@
           ]
         }
       ],
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns"
+    },
+    "dmg": {
+      "iconSize": 96,
+      "contents": [
+        {
+          "x": 140,
+          "y": 220,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   }
 }
