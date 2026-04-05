@@ -493,11 +493,42 @@ if is_mac:
         CGEventTapCreate, CGEventTapEnable, CGEventTapIsEnabled,
         kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
         kCGEventTapOptionListenOnly,
-        CGEventMaskBit, kCGEventOtherMouseDown,
+        CGEventMaskBit,
+        kCGEventLeftMouseDown,
+        kCGEventRightMouseDown,
+        kCGEventOtherMouseDown,
+        kCGEventLeftMouseUp,
+        kCGEventRightMouseUp,
+        kCGEventOtherMouseUp,
         CGEventGetIntegerValueField, kCGMouseEventButtonNumber,
         CFMachPortCreateRunLoopSource, CFRunLoopGetCurrent, CFRunLoopAddSource,
         kCFRunLoopCommonModes, CFRunLoopRun, CFRunLoopStop
     )
+
+    def _mac_mouse_event_mask():
+        """左/右键在 macOS 上走 Left/RightMouseDown，不是 OtherMouseDown；须一并订阅才能拦截映射。"""
+        return (
+            CGEventMaskBit(kCGEventLeftMouseDown)
+            | CGEventMaskBit(kCGEventRightMouseDown)
+            | CGEventMaskBit(kCGEventOtherMouseDown)
+            | CGEventMaskBit(kCGEventLeftMouseUp)
+            | CGEventMaskBit(kCGEventRightMouseUp)
+            | CGEventMaskBit(kCGEventOtherMouseUp)
+        )
+
+    # 已拦截的 MouseDown 对应的 MouseUp 需一并丢弃，避免目标应用收到不成对按钮事件
+    _mac_pending_mouseup = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+
+    def _mac_try_consume_mouseup(btn: int) -> bool:
+        c = _mac_pending_mouseup.get(btn, 0)
+        if c > 0:
+            _mac_pending_mouseup[btn] = c - 1
+            return True
+        return False
+
+    def _mac_note_intercepted_down(btn: int) -> None:
+        if btn in _mac_pending_mouseup:
+            _mac_pending_mouseup[btn] += 1
 
 def check_accessibility_permission() -> bool:
     """检测 macOS 辅助功能权限（仅 Mac）"""
@@ -512,7 +543,7 @@ def check_accessibility_permission() -> bool:
             kCGSessionEventTap,
             kCGHeadInsertEventTap,
             kCGEventTapOptionListenOnly,  # 只监听，权限要求更低
-            CGEventMaskBit(kCGEventOtherMouseDown),
+            _mac_mouse_event_mask(),
             lambda *args: args[2],  # 空回调
             None
         )
@@ -539,8 +570,28 @@ def _mouse_callback(proxy, event_type, event, refcon):
         CGEventTapEnable(_tap, True)
     try:
         button_number = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber)
-        handled = handle_mouse_button(button_number)
+        if event_type == kCGEventLeftMouseUp:
+            up_btn = 0
+        elif event_type == kCGEventRightMouseUp:
+            up_btn = 1
+        elif event_type == kCGEventOtherMouseUp:
+            up_btn = int(button_number)
+        else:
+            up_btn = None
+
+        if up_btn is not None and _mac_try_consume_mouseup(up_btn):
+            return None
+
+        if event_type not in (
+            kCGEventLeftMouseDown,
+            kCGEventRightMouseDown,
+            kCGEventOtherMouseDown,
+        ):
+            return event
+
+        handled = handle_mouse_button(int(button_number))
         if handled:
+            _mac_note_intercepted_down(int(button_number))
             return None
     except Exception:
         pass
@@ -550,10 +601,9 @@ def _run_macos_listener():
     """运行 macOS 监听器"""
     global _run_loop, _tap, is_listening
     try:
-        mask = CGEventMaskBit(kCGEventOtherMouseDown)
         _tap = CGEventTapCreate(
             kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
-            mask, _mouse_callback, None
+            _mac_mouse_event_mask(), _mouse_callback, None
         )
         if _tap is None:
             app_logger.error("创建事件 tap 失败，请检查辅助功能权限", source="mouse_listener")
@@ -577,12 +627,16 @@ _win_callback_ref = None  # 保持回调引用防止被垃圾回收
 # Windows 钩子常量（模块级定义）
 _WH_MOUSE_LL = 14
 _WM_QUIT = 0x0012
-_WM_LBUTTONDOWN, _WM_RBUTTONDOWN = 0x0201, 0x0204
-_WM_MBUTTONDOWN, _WM_XBUTTONDOWN = 0x0207, 0x020B
+_WM_LBUTTONDOWN, _WM_LBUTTONUP = 0x0201, 0x0202
+_WM_RBUTTONDOWN, _WM_RBUTTONUP = 0x0204, 0x0205
+_WM_MBUTTONDOWN, _WM_MBUTTONUP = 0x0207, 0x0208
+_WM_XBUTTONDOWN = 0x020B
 _WM_XBUTTONUP = 0x020C
 _XBUTTON1, _XBUTTON2 = 1, 2
 # 已拦截的 XBUTTONDOWN 与后续 XBUTTONUP 配对计数（高字：XBUTTON1=1, XBUTTON2=2），避免只吞 DOWN、UP 仍进入 Chromium 等
 _win_pending_xbutton_up = {1: 0, 2: 0}
+# 左/右/中键（0/1/2）同样需 DOWN/UP 成对吞掉
+_win_pending_primary_up = {0: 0, 1: 0, 2: 0}
 
 
 def _win_consume_matched_xbutton(hi: int) -> int:
@@ -596,6 +650,20 @@ def _win_try_consume_xbutton_up(hi: int) -> bool:
     c = _win_pending_xbutton_up.get(hi, 0)
     if c > 0:
         _win_pending_xbutton_up[hi] = c - 1
+        return True
+    return False
+
+
+def _win_consume_matched_primary(btn: int) -> int:
+    if btn in _win_pending_primary_up:
+        _win_pending_primary_up[btn] += 1
+    return 1
+
+
+def _win_try_consume_primary_up(btn: int) -> bool:
+    c = _win_pending_primary_up.get(btn, 0)
+    if c > 0:
+        _win_pending_primary_up[btn] = c - 1
         return True
     return False
 
@@ -638,6 +706,25 @@ if is_windows:
                         )
                         return 1
 
+                if wParam == _WM_LBUTTONUP and _win_try_consume_primary_up(0):
+                    app_logger.debug(
+                        "Windows钩子: 吞掉 LBUTTONUP（与已拦截的左键 DOWN 配对）",
+                        source="mouse_listener",
+                    )
+                    return 1
+                if wParam == _WM_RBUTTONUP and _win_try_consume_primary_up(1):
+                    app_logger.debug(
+                        "Windows钩子: 吞掉 RBUTTONUP（与已拦截的右键 DOWN 配对）",
+                        source="mouse_listener",
+                    )
+                    return 1
+                if wParam == _WM_MBUTTONUP and _win_try_consume_primary_up(2):
+                    app_logger.debug(
+                        "Windows钩子: 吞掉 MBUTTONUP（与已拦截的中键 DOWN 配对）",
+                        source="mouse_listener",
+                    )
+                    return 1
+
                 btn = -1
                 btn_name = "unknown"
                 hi = None  # WM_XBUTTONDOWN 时 mouseData 高字（XBUTTON1=1, XBUTTON2=2）
@@ -661,18 +748,14 @@ if is_windows:
                         btn_name = "side2(X2)"
 
                 if btn >= 0:
-                    # 只处理侧键（3和4），让左右中键正常通过
-                    if btn >= 3:
-                        hx = hi if hi is not None else ((s.mouseData >> 16) & 0xFFFF)
-                        # 仅在有映射/序列被处理时拦截；不按窗口类型屏蔽，本软件界面与其它应用行为一致
-                        handled = handle_mouse_button(btn)
-                        if handled:
-                            app_logger.info(f"Windows钩子拦截: {btn_name} -> 已处理并阻止", source="mouse_listener")
+                    handled = handle_mouse_button(btn)
+                    if handled:
+                        app_logger.info(f"Windows钩子拦截: {btn_name} -> 已处理并阻止", source="mouse_listener")
+                        if btn >= 3:
+                            hx = hi if hi is not None else ((s.mouseData >> 16) & 0xFFFF)
                             return _win_consume_matched_xbutton(hx)
-                        app_logger.debug(f"Windows钩子: {btn_name} -> 无映射，放行", source="mouse_listener")
-                    else:
-                        # 左右中键不拦截，直接放行
-                        pass
+                        return _win_consume_matched_primary(btn)
+                    app_logger.debug(f"Windows钩子: {btn_name} -> 无映射，放行", source="mouse_listener")
 
             except Exception as e:
                 app_logger.error(f"Windows钩子异常: {e}", source="mouse_listener")
