@@ -22,6 +22,7 @@ let backendPort = DEFAULT_BACKEND_PORT;
 
 let mainWindow = null;
 let backendProcess = null;
+let launchInstanceToken = '';
 
 ipcMain.handle('kpsr-quit', () => {
   app.quit();
@@ -74,6 +75,7 @@ function getBackendEnv() {
     ...process.env,
     KPSR_USER_DATA: app.getPath('userData'),
     KPSR_PORT: String(backendPort),
+    KPSR_INSTANCE_TOKEN: launchInstanceToken,
   };
 }
 
@@ -125,12 +127,26 @@ function waitForBackend(timeoutMs = 180000) {
         return;
       }
       const req = http.get(getHealthUrl(), { timeout: 2500 }, (res) => {
-        res.resume();
-        if (res.statusCode === 200) {
-          resolve(true);
-        } else {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            setTimeout(tryOnce, 400);
+            return;
+          }
+          try {
+            const j = JSON.parse(body || '{}');
+            // 只认本次启动实例，避免误连旧版本/旧安装包占用同端口导致状态跳变
+            if (j.instance_token && j.instance_token === launchInstanceToken) {
+              resolve(true);
+              return;
+            }
+          } catch (_) {}
           setTimeout(tryOnce, 400);
-        }
+        });
       });
       req.on('error', () => {
         setTimeout(tryOnce, 400);
@@ -224,6 +240,7 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     backendPort = readConfiguredPort();
+    launchInstanceToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     if (CHROMIUM_FORBIDDEN_WEB_PORTS.has(backendPort)) {
       await dialog.showMessageBox({
         type: 'error',

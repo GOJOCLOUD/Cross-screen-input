@@ -12,6 +12,9 @@ import re
 import json
 from contextlib import asynccontextmanager
 
+# 本次后端进程启动标识（由 Electron 主进程注入），用于避免前端误连旧实例
+INSTANCE_TOKEN = (os.environ.get("KPSR_INSTANCE_TOKEN") or "").strip()
+
 # 第三方库
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -317,6 +320,7 @@ async def health_check() -> dict:
         "status": "healthy",
         "message": "服务运行正常",
         "local_ip": get_current_station().get_local_ip(),
+        "instance_token": INSTANCE_TOKEN,
     }
 
 if __name__ == "__main__":
