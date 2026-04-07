@@ -570,11 +570,15 @@
                             body: JSON.stringify({ license_key: licenseKey })
                         });
                         const data = await res.json();
-                        if (data.status === 'success') {
+                        if (res.ok && (data.status === 'success' || data.activated)) {
                             alert('激活成功');
                             await loadActivationStatus();
                         } else {
-                            alert('激活失败: ' + (data.message || '未知错误'));
+                            let msg = data.message || data.detail || '激活码无效';
+                            if (Array.isArray(data.detail)) {
+                                msg = data.detail.map(function (x) { return x.msg || JSON.stringify(x); }).join('; ');
+                            }
+                            alert('激活失败: ' + msg);
                         }
                     } catch (e) {
                         console.error('激活失败:', e);

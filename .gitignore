@@ -13,3 +13,6 @@ hotspot/backend/build/
 # Electron
 electron/node_modules/
 electron/dist/
+
+# 激活码签发私钥（仅维护者本地保留，勿提交）
+activation_ed25519_private.pem

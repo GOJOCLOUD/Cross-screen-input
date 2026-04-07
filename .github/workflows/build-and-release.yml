@@ -97,6 +97,7 @@ jobs:
             --hidden-import websockets.legacy.server \
             --hidden-import websockets.legacy.client \
             --hidden-import python_multipart \
+            --collect-all cryptography \
             --collect-all pynput \
             --collect-all fastapi \
             --collect-all starlette \

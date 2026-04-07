@@ -273,11 +273,15 @@ function initActivationButtons() {
                 
                 const data = await res.json();
                 
-                if (data.activated) {
+                if (res.ok && (data.activated || data.status === 'success')) {
                     alert('激活成功！');
                     loadActivationStatus();
                 } else {
-                    alert('激活失败：' + (data.message || '激活码无效'));
+                    let msg = data.message || data.detail || '激活码无效';
+                    if (Array.isArray(data.detail)) {
+                        msg = data.detail.map(function (x) { return x.msg || JSON.stringify(x); }).join('; ');
+                    }
+                    alert('激活失败：' + msg);
                 }
             } catch (error) {
                 console.error('激活失败:', error);

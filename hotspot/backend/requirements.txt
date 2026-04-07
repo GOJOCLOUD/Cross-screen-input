@@ -28,6 +28,9 @@ pydantic-settings
 # 类型提示扩展
 typing_extensions
 
+# Ed25519 激活验签
+cryptography>=42.0.0
+
 # macOS 专用（仅 Darwin 安装）
 pyobjc-core>=9.0; sys_platform == 'darwin'
 pyobjc-framework-Quartz>=9.0; sys_platform == 'darwin'
