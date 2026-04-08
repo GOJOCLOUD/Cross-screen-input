@@ -35,6 +35,21 @@ except Exception:
 _ed25519_public = None
 
 
+def _coerce_activated_flag(value) -> bool:
+    """兼容历史脏数据（如 'false' 字符串）并统一转换为布尔值。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "yes", "y", "on"):
+            return True
+        if v in ("false", "0", "no", "n", "off", ""):
+            return False
+    return False
+
+
 def _get_ed25519_public():
     global _ed25519_public
     if _ed25519_public is not None:
@@ -130,6 +145,7 @@ def parse_and_verify_license(license_key: str, device_uuid_raw: str) -> Tuple[bo
 
 
 def _invalidate_if_broken(status: dict) -> dict:
+    status["activated"] = _coerce_activated_flag(status.get("activated", False))
     if not status.get("activated"):
         return status
     if not status.get("license_blob"):
@@ -194,7 +210,7 @@ def get_activation_status():
     from config import HTTP_PORT
 
     status = load_activation_status()
-    activated = bool(status.get("activated", False))
+    activated = _coerce_activated_flag(status.get("activated", False))
     device_uuid = get_motherboard_uuid()
     ensure_station_for_current_network(port=HTTP_PORT)
     station = get_current_station()

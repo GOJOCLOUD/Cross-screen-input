@@ -173,6 +173,19 @@
         const TIP_UNIFIED = '请确保手机与电脑在同一私有网络（手机热点或同一路由器 Wi‑Fi 均可），扫码或复制链接访问';
         /** 未激活：与链接/二维码一致，且不暴露端口/IP（不再区分网段） */
         const MSG_NEED_ACTIVATE = '请激活后使用手机代码';
+        // 激活状态在窗口最小化/恢复后可能遭遇瞬时异常响应，这里做一次前端防抖确认。
+        let lastActivationUiState = null; // true / false / null
+
+        function normalizeActivationFlag(value) {
+            if (value === true || value === false) return value;
+            if (typeof value === 'number') return value === 1;
+            if (typeof value === 'string') {
+                const v = value.trim().toLowerCase();
+                if (v === 'true' || v === '1') return true;
+                if (v === 'false' || v === '0' || v === '') return false;
+            }
+            return false;
+        }
 
         /** 必须先于激活/二维码逻辑：从服务端读取是否已同意协议（不依赖 localStorage） */
         async function ensureEulaAccepted() {
@@ -419,9 +432,27 @@
 
         async function loadActivationStatus() {
             try {
-                const response = await fetch('/api/activation/status');
+                const response = await fetch('/api/activation/status', { cache: 'no-store' });
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const data = await response.json();
+                let activated = normalizeActivationFlag(data.activated);
+
+                // 仅在“未激活 -> 已激活”的方向做二次确认，避免恢复窗口时瞬时误跳。
+                if (lastActivationUiState === false && activated === true) {
+                    try {
+                        const confirmRes = await fetch('/api/activation/status', { cache: 'no-store' });
+                        if (confirmRes.ok) {
+                            const confirmData = await confirmRes.json();
+                            activated = normalizeActivationFlag(confirmData.activated);
+                        } else {
+                            activated = false;
+                        }
+                    } catch (_) {
+                        activated = false;
+                    }
+                }
+                data.activated = activated;
+                lastActivationUiState = activated;
 
                 const activationDot = document.getElementById('activationDot');
                 const activationText = document.getElementById('activationText');
@@ -632,6 +663,7 @@
             if (document.hidden) return;
             loadStatus();
             loadAccessInfo();
+            loadActivationStatus();
         });
 
         (async function boot() {
