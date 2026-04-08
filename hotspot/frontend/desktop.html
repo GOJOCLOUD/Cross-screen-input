@@ -197,6 +197,58 @@
         const MSG_NEED_ACTIVATE = '请激活后使用手机端';
         // 激活状态在窗口最小化/恢复后可能遭遇瞬时异常响应，这里做一次前端防抖确认。
         let lastActivationUiState = null; // true / false / null
+        // 试用倒计时：使用本地 tick 保证每秒变化；到 0 后自动刷新激活状态
+        let trialExpiryAtMs = null;
+        let trialTickTimer = null;
+        let trialExpireRefreshOnce = false;
+
+        function stopTrialCountdown() {
+            if (trialTickTimer) {
+                clearInterval(trialTickTimer);
+                trialTickTimer = null;
+            }
+            trialExpiryAtMs = null;
+            trialExpireRefreshOnce = false;
+            const trialEl = document.getElementById('trialCountdown');
+            if (trialEl) trialEl.style.display = 'none';
+        }
+
+        function startTrialCountdown(seconds) {
+            const sec = Number.isFinite(+seconds) ? Math.max(0, parseInt(seconds, 10)) : 0;
+            if (sec <= 0) {
+                stopTrialCountdown();
+                return;
+            }
+            trialExpiryAtMs = Date.now() + sec * 1000;
+            trialExpireRefreshOnce = false;
+            const trialEl = document.getElementById('trialCountdown');
+            const trialSecEl = document.getElementById('trialCountdownSeconds');
+            if (!trialEl || !trialSecEl) return;
+
+            const tick = async () => {
+                if (trialExpiryAtMs == null) return;
+                const left = Math.max(0, Math.ceil((trialExpiryAtMs - Date.now()) / 1000));
+                if (left > 0) {
+                    trialSecEl.textContent = String(left);
+                    trialEl.style.display = 'block';
+                    return;
+                }
+                // 到期：隐藏倒计时，并触发一次状态刷新进入“需激活”UI
+                trialEl.style.display = 'none';
+                if (!trialExpireRefreshOnce) {
+                    trialExpireRefreshOnce = true;
+                    try {
+                        await loadActivationStatus();
+                    } catch (e) { /* ignore */ }
+                }
+                stopTrialCountdown();
+            };
+
+            // 立即更新一次，然后每秒 tick
+            void tick();
+            if (trialTickTimer) clearInterval(trialTickTimer);
+            trialTickTimer = setInterval(() => { void tick(); }, 1000);
+        }
 
         function normalizeActivationFlag(value) {
             if (value === true || value === false) return value;
@@ -483,18 +535,11 @@
                 data.activated = activated;
                 lastActivationUiState = activated;
 
-                // 左上角倒计时（仅未激活且试用中显示）
-                const trialEl = document.getElementById('trialCountdown');
-                const trialSecEl = document.getElementById('trialCountdownSeconds');
-                if (trialEl && trialSecEl) {
-                    const trialActive = !!data.trial_active;
-                    const sec = Number.isFinite(+data.trial_remaining_seconds) ? Math.max(0, parseInt(data.trial_remaining_seconds, 10)) : 0;
-                    if (!data.activated && trialActive && sec > 0) {
-                        trialSecEl.textContent = String(sec);
-                        trialEl.style.display = 'block';
-                    } else {
-                        trialEl.style.display = 'none';
-                    }
+                // 左上角倒计时（仅未激活且试用中显示；用本地 tick 实现每秒变化）
+                if (!data.activated && !!data.trial_active) {
+                    startTrialCountdown(data.trial_remaining_seconds);
+                } else {
+                    stopTrialCountdown();
                 }
 
                 const activationDot = document.getElementById('activationDot');
