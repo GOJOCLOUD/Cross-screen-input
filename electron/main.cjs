@@ -357,7 +357,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      // macOS 下部分机器在触发系统权限跳转（tccd）时，沙盒渲染进程可能被系统限制并导致主进程退出。
+      // 先关闭 Electron renderer sandbox，优先保证稳定性；后续可再做更细粒度的安全加固。
+      sandbox: false,
     },
   });
 
