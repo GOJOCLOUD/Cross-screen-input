@@ -67,10 +67,15 @@ function getAppUrl() {
 function getBackendExecutable() {
   const exeName = process.platform === 'win32' ? 'kpsr-backend.exe' : 'kpsr-backend';
   if (app.isPackaged) {
+    // 兼容两种打包形态：
+    // 1) PyInstaller onedir（推荐）：resources/backend/kpsr-backend
+    // 2) 旧 onefile：resources/backend/kpsr-backend
     return path.join(process.resourcesPath, 'backend', exeName);
   }
-  const devExe = path.join(__dirname, '..', 'hotspot', 'backend', 'dist', exeName);
-  return devExe;
+  const distDir = path.join(__dirname, '..', 'hotspot', 'backend', 'dist');
+  const onedirExe = path.join(distDir, exeName, exeName);
+  if (fs.existsSync(onedirExe)) return onedirExe;
+  return path.join(distDir, exeName);
 }
 
 /** 与 Electron 用户数据目录一致，激活文件随卸载删除（见 package.json deleteAppDataOnUninstall） */

@@ -68,7 +68,7 @@ jobs:
         run: |
           cd hotspot/backend
           pyinstaller \
-            --onefile \
+            --onedir \
             --noconfirm \
             --clean \
             --name "${BACKEND_EXE_NAME}" \
@@ -112,12 +112,15 @@ jobs:
       - name: Stage backend for Electron
         shell: bash
         run: |
-          bin="hotspot/backend/dist/${BACKEND_EXE_NAME}"
+          bin_dir="hotspot/backend/dist/${BACKEND_EXE_NAME}"
+          bin="${bin_dir}/${BACKEND_EXE_NAME}"
+          test -d "${bin_dir}"
           test -f "${bin}"
           chmod +x "${bin}"
           file "${bin}"
           mkdir -p electron/resources/backend
-          cp -f "${bin}" electron/resources/backend/kpsr-backend
+          rm -rf electron/resources/backend/*
+          cp -R "${bin_dir}/." electron/resources/backend/
           rm -f electron/resources/backend/.gitkeep
 
       - name: Prepare non-infringing app icon (80% scale)
