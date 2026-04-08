@@ -41,6 +41,8 @@ has_permission = None  # None=未检测, True=有权限, False=无权限
 permission_message = ""
 _mac_permission_prompted_once = False
 _listener_state_lock = threading.Lock()
+_mac_start_ready_event = None
+_mac_start_ok = False
 
 # 鼠标按键映射
 button_mappings = {}  # 单键映射: {keyType: action}
@@ -643,7 +645,7 @@ def _mouse_callback(proxy, event_type, event, refcon):
 
 def _run_macos_listener():
     """运行 macOS 监听器"""
-    global _run_loop, _tap, is_listening
+    global _run_loop, _tap, is_listening, has_permission, permission_message, _mac_start_ok
     try:
         _tap = CGEventTapCreate(
             kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
@@ -651,16 +653,29 @@ def _run_macos_listener():
         )
         if _tap is None:
             app_logger.error("创建事件 tap 失败，请检查辅助功能权限", source="mouse_listener")
+            has_permission = False
+            permission_message = "辅助功能权限未生效，请在系统设置中重新勾选后重试"
+            _mac_start_ok = False
+            if _mac_start_ready_event:
+                _mac_start_ready_event.set()
+            _open_macos_accessibility_settings()
             is_listening = False
             return
         CGEventTapEnable(_tap, True)
         source = CFMachPortCreateRunLoopSource(None, _tap, 0)
         _run_loop = CFRunLoopGetCurrent()
         CFRunLoopAddSource(_run_loop, source, kCFRunLoopCommonModes)
+        _mac_start_ok = True
+        is_listening = True
+        if _mac_start_ready_event:
+            _mac_start_ready_event.set()
         app_logger.info("macOS 监听器已启动", source="mouse_listener")
         CFRunLoopRun()
     except Exception as e:
         app_logger.error(f"macOS 监听器异常: {e}", source="mouse_listener")
+        _mac_start_ok = False
+        if _mac_start_ready_event:
+            _mac_start_ready_event.set()
         is_listening = False
 
 # ---------- Windows 监听器（Win32 低级钩子）----------
@@ -856,7 +871,7 @@ if is_windows:
 
 def start_listener():
     """启动鼠标监听（按平台）"""
-    global listener_thread, is_listening, has_permission
+    global listener_thread, is_listening, has_permission, _mac_start_ready_event, _mac_start_ok
     with _listener_state_lock:
         if is_listening:
             load_mappings()
@@ -962,12 +977,21 @@ def start_listener():
                     'permission_message': '鼠标钩子安装失败'
                 }
 
+        _mac_start_ready_event = threading.Event()
+        _mac_start_ok = False
         listener_thread = threading.Thread(target=_run_macos_listener, daemon=True)
         listener_thread.start()
-        is_listening = True
+        _mac_start_ready_event.wait(timeout=2.5)
+        if _mac_start_ok:
+            return {
+                'success': True,
+                'message': '鼠标监听器启动成功',
+                'permission': has_permission,
+                'permission_message': permission_message
+            }
         return {
-            'success': True,
-            'message': '鼠标监听器启动成功',
+            'success': False,
+            'message': '鼠标监听器启动失败，请确认辅助功能权限已对当前应用生效',
             'permission': has_permission,
             'permission_message': permission_message
         }
