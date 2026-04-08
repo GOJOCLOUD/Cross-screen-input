@@ -145,9 +145,9 @@ def _forbid_phone_surface_if_unactivated(request: Request):
     if client_ip in ("127.0.0.1", "::1"):
         return None
     try:
-        from routes.activation import load_activation_status as _load_act_file
+        from routes.activation import is_phone_allowed_by_activation_or_trial
 
-        if _load_act_file().get("activated"):
+        if is_phone_allowed_by_activation_or_trial():
             return None
     except Exception:
         return None
