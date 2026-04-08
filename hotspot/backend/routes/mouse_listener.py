@@ -39,6 +39,8 @@ is_windows = _platform == 'windows'
 # 权限状态
 has_permission = None  # None=未检测, True=有权限, False=无权限
 permission_message = ""
+_mac_permission_prompted_once = False
+_listener_state_lock = threading.Lock()
 
 # 鼠标按键映射
 button_mappings = {}  # 单键映射: {keyType: action}
@@ -529,7 +531,22 @@ if is_mac:
         if btn in _mac_pending_mouseup:
             _mac_pending_mouseup[btn] += 1
 
-def check_accessibility_permission() -> bool:
+def _open_macos_accessibility_settings():
+    """打开 macOS 辅助功能权限设置页。"""
+    if not is_mac:
+        return
+    try:
+        subprocess.Popen(
+            ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as e:
+        app_logger.warning(f"打开辅助功能设置页失败: {e}", source="mouse_listener")
+
+
+def check_accessibility_permission(prompt: bool = False) -> bool:
     """检测 macOS 辅助功能权限（仅 Mac）"""
     global has_permission, permission_message
     if not is_mac:
@@ -537,12 +554,12 @@ def check_accessibility_permission() -> bool:
         permission_message = "当前平台无需辅助功能权限"
         return True
     try:
-        # 使用静默权限检测，避免在应用启动阶段触发系统授权弹窗。
+        # prompt=True 时会触发系统授权提示；False 时仅静默检测。
         trusted = False
         if hasattr(Quartz, "AXIsProcessTrustedWithOptions") and hasattr(Quartz, "kAXTrustedCheckOptionPrompt"):
             trusted = bool(
                 Quartz.AXIsProcessTrustedWithOptions(
-                    {Quartz.kAXTrustedCheckOptionPrompt: False}
+                    {Quartz.kAXTrustedCheckOptionPrompt: bool(prompt)}
                 )
             )
         elif hasattr(Quartz, "AXIsProcessTrusted"):
@@ -563,6 +580,32 @@ def check_accessibility_permission() -> bool:
         permission_message = f"权限检测失败: {e}"
         app_logger.error(permission_message, source="mouse_listener")
         return False
+
+
+def ensure_accessibility_permission_on_startup() -> bool:
+    """
+    启动阶段确保辅助功能权限：
+    1) 先静默检测；
+    2) 若未授权，本次进程仅触发一次系统授权提示；
+    3) 若仍未授权，打开系统设置页，便于用户手动勾选。
+    """
+    global _mac_permission_prompted_once
+    if not is_mac:
+        return True
+
+    if check_accessibility_permission(prompt=False):
+        return True
+
+    if not _mac_permission_prompted_once:
+        _mac_permission_prompted_once = True
+        app_logger.info("首次启动触发辅助功能权限请求", source="mouse_listener")
+        check_accessibility_permission(prompt=True)
+
+    if check_accessibility_permission(prompt=False):
+        return True
+
+    _open_macos_accessibility_settings()
+    return False
 
 def _mouse_callback(proxy, event_type, event, refcon):
     """macOS 鼠标事件回调"""
@@ -814,150 +857,151 @@ if is_windows:
 def start_listener():
     """启动鼠标监听（按平台）"""
     global listener_thread, is_listening, has_permission
-
-    if is_listening:
-        load_mappings()
-        return {
-            'success': True,
-            'message': '监听器已在运行，已重新加载配置',
-            'permission': has_permission,
-            'permission_message': permission_message
-        }
-
-    if is_mac and not check_accessibility_permission():
-        return {
-            'success': False,
-            'message': '未获得辅助功能权限，无法启动监听器',
-            'permission': has_permission,
-            'permission_message': permission_message
-        }
-
-    load_mappings()
-
-    if is_windows:
-        # 注意：不要在函数内再 import threading，否则 Python 会把 threading 视为整函内容的局部变量，
-        # macOS 分支执行 listener_thread = threading.Thread(...) 时会报「引用前尚未赋值」。
-        # 使用文件顶部已导入的 threading 模块即可。
-        # 使用事件来等待钩子安装完成
-        _hook_ready_event = threading.Event()
-        _hook_success = [False]  # 使用列表来存储结果
-        
-        def _windows_listener_wrapper():
-            """包装器，用于通知钩子安装状态"""
-            global _win_hook_handle, _win_listener_thread_id, _win_callback_ref, is_listening
-            try:
-                import ctypes
-                from ctypes import wintypes
-                user32 = ctypes.windll.user32
-                kernel32 = ctypes.windll.kernel32
-                _win_listener_thread_id = threading.get_ident()
-
-                # WH_MOUSE_LL 是全局钩子，hMod 参数必须为 NULL (0)
-                _win_callback_ref = _win_low_level_handler
-                _win_hook_handle = user32.SetWindowsHookExW(
-                    _WH_MOUSE_LL, _win_callback_ref, None, 0
-                )
-                if not _win_hook_handle:
-                    err = kernel32.GetLastError()
-                    app_logger.error(f"Windows 安装鼠标钩子失败，错误码: {err}", source="mouse_listener")
-                    _win_callback_ref = None
-                    is_listening = False
-                    _hook_success[0] = False
-                    _hook_ready_event.set()
-                    return
-                
-                # 钩子安装成功
-                app_logger.info("Windows 监听器已启动", source="mouse_listener")
-                _hook_success[0] = True
-                _hook_ready_event.set()
-                
-                # 进入消息循环
-                msg = wintypes.MSG()
-                while user32.GetMessageW(ctypes.byref(msg), None, 0, 0):
-                    if msg.message == _WM_QUIT:
-                        break
-                    user32.TranslateMessage(ctypes.byref(msg))
-                    user32.DispatchMessageW(ctypes.byref(msg))
-                user32.UnhookWindowsHookEx(_win_hook_handle)
-                _win_hook_handle = None
-                _win_callback_ref = None
-            except Exception as e:
-                app_logger.error(f"Windows 监听器异常: {e}", source="mouse_listener")
-                is_listening = False
-                _hook_success[0] = False
-                if not _hook_ready_event.is_set():
-                    _hook_ready_event.set()
-                if _win_hook_handle:
-                    try:
-                        ctypes.windll.user32.UnhookWindowsHookEx(_win_hook_handle)
-                    except Exception:
-                        pass
-                    _win_hook_handle = None
-                _win_callback_ref = None
-            finally:
-                _win_listener_thread_id = None
-        
-        listener_thread = threading.Thread(target=_windows_listener_wrapper, daemon=True)
-        listener_thread.start()
-        
-        # 等待钩子安装完成（最多等待3秒）
-        _hook_ready_event.wait(timeout=3.0)
-        
-        if _hook_success[0]:
-            is_listening = True
+    with _listener_state_lock:
+        if is_listening:
+            load_mappings()
             return {
                 'success': True,
-                'message': 'Windows 鼠标监听器启动成功',
-                'permission': True,
-                'permission_message': '鼠标侧键功能可用（若无效请以管理员身份运行）'
-            }
-        else:
-            return {
-                'success': False,
-                'message': 'Windows 鼠标钩子安装失败，请检查权限或以管理员身份运行',
-                'permission': False,
-                'permission_message': '鼠标钩子安装失败'
+                'message': '监听器已在运行，已重新加载配置',
+                'permission': has_permission,
+                'permission_message': permission_message
             }
 
-    listener_thread = threading.Thread(target=_run_macos_listener, daemon=True)
-    listener_thread.start()
-    is_listening = True
-    return {
-        'success': True,
-        'message': '鼠标监听器启动成功',
-        'permission': has_permission,
-        'permission_message': permission_message
-    }
+        if is_mac and not ensure_accessibility_permission_on_startup():
+            return {
+                'success': False,
+                'message': '未获得辅助功能权限，已打开系统设置页，请授权后重试',
+                'permission': has_permission,
+                'permission_message': permission_message
+            }
+
+        load_mappings()
+
+        if is_windows:
+            # 注意：不要在函数内再 import threading，否则 Python 会把 threading 视为整函内容的局部变量，
+            # macOS 分支执行 listener_thread = threading.Thread(...) 时会报「引用前尚未赋值」。
+            # 使用文件顶部已导入的 threading 模块即可。
+            # 使用事件来等待钩子安装完成
+            _hook_ready_event = threading.Event()
+            _hook_success = [False]  # 使用列表来存储结果
+            
+            def _windows_listener_wrapper():
+                """包装器，用于通知钩子安装状态"""
+                global _win_hook_handle, _win_listener_thread_id, _win_callback_ref, is_listening
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+                    user32 = ctypes.windll.user32
+                    kernel32 = ctypes.windll.kernel32
+                    _win_listener_thread_id = threading.get_ident()
+
+                    # WH_MOUSE_LL 是全局钩子，hMod 参数必须为 NULL (0)
+                    _win_callback_ref = _win_low_level_handler
+                    _win_hook_handle = user32.SetWindowsHookExW(
+                        _WH_MOUSE_LL, _win_callback_ref, None, 0
+                    )
+                    if not _win_hook_handle:
+                        err = kernel32.GetLastError()
+                        app_logger.error(f"Windows 安装鼠标钩子失败，错误码: {err}", source="mouse_listener")
+                        _win_callback_ref = None
+                        is_listening = False
+                        _hook_success[0] = False
+                        _hook_ready_event.set()
+                        return
+                    
+                    # 钩子安装成功
+                    app_logger.info("Windows 监听器已启动", source="mouse_listener")
+                    _hook_success[0] = True
+                    _hook_ready_event.set()
+                    
+                    # 进入消息循环
+                    msg = wintypes.MSG()
+                    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0):
+                        if msg.message == _WM_QUIT:
+                            break
+                        user32.TranslateMessage(ctypes.byref(msg))
+                        user32.DispatchMessageW(ctypes.byref(msg))
+                    user32.UnhookWindowsHookEx(_win_hook_handle)
+                    _win_hook_handle = None
+                    _win_callback_ref = None
+                except Exception as e:
+                    app_logger.error(f"Windows 监听器异常: {e}", source="mouse_listener")
+                    is_listening = False
+                    _hook_success[0] = False
+                    if not _hook_ready_event.is_set():
+                        _hook_ready_event.set()
+                    if _win_hook_handle:
+                        try:
+                            ctypes.windll.user32.UnhookWindowsHookEx(_win_hook_handle)
+                        except Exception:
+                            pass
+                        _win_hook_handle = None
+                    _win_callback_ref = None
+                finally:
+                    _win_listener_thread_id = None
+            
+            listener_thread = threading.Thread(target=_windows_listener_wrapper, daemon=True)
+            listener_thread.start()
+            
+            # 等待钩子安装完成（最多等待3秒）
+            _hook_ready_event.wait(timeout=3.0)
+            
+            if _hook_success[0]:
+                is_listening = True
+                return {
+                    'success': True,
+                    'message': 'Windows 鼠标监听器启动成功',
+                    'permission': True,
+                    'permission_message': '鼠标侧键功能可用（若无效请以管理员身份运行）'
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Windows 鼠标钩子安装失败，请检查权限或以管理员身份运行',
+                    'permission': False,
+                    'permission_message': '鼠标钩子安装失败'
+                }
+
+        listener_thread = threading.Thread(target=_run_macos_listener, daemon=True)
+        listener_thread.start()
+        is_listening = True
+        return {
+            'success': True,
+            'message': '鼠标监听器启动成功',
+            'permission': has_permission,
+            'permission_message': permission_message
+        }
 
 def stop_listener():
     """停止鼠标监听（按平台）"""
     global listener_thread, is_listening, _run_loop, _tap, _win_listener_thread_id
 
-    if not is_listening:
-        return {'success': True, 'message': '监听器未运行'}
+    with _listener_state_lock:
+        if not is_listening:
+            return {'success': True, 'message': '监听器未运行'}
 
-    try:
-        if is_windows and _win_listener_thread_id is not None:
-            import ctypes
-            WM_QUIT = 0x0012
-            ctypes.windll.user32.PostThreadMessageW(_win_listener_thread_id, WM_QUIT, 0, 0)
-            if listener_thread and listener_thread.is_alive():
-                listener_thread.join(timeout=2.0)
+        try:
+            if is_windows and _win_listener_thread_id is not None:
+                import ctypes
+                WM_QUIT = 0x0012
+                ctypes.windll.user32.PostThreadMessageW(_win_listener_thread_id, WM_QUIT, 0, 0)
+                if listener_thread and listener_thread.is_alive():
+                    listener_thread.join(timeout=2.0)
+                is_listening = False
+                return {'success': True, 'message': '鼠标监听器已停止'}
+            if is_mac:
+                if _run_loop:
+                    CFRunLoopStop(_run_loop)
+                    _run_loop = None
+                if _tap:
+                    CGEventTapEnable(_tap, False)
+                    _tap = None
             is_listening = False
             return {'success': True, 'message': '鼠标监听器已停止'}
-        if is_mac:
-            if _run_loop:
-                CFRunLoopStop(_run_loop)
-                _run_loop = None
-            if _tap:
-                CGEventTapEnable(_tap, False)
-                _tap = None
-        is_listening = False
-        return {'success': True, 'message': '鼠标监听器已停止'}
-    except Exception as e:
-        app_logger.error(f"停止监听器失败: {e}", source="mouse_listener")
-        is_listening = False
-        return {'success': False, 'message': f'停止监听器失败: {e}'}
+        except Exception as e:
+            app_logger.error(f"停止监听器失败: {e}", source="mouse_listener")
+            is_listening = False
+            return {'success': False, 'message': f'停止监听器失败: {e}'}
 
 def is_listener_running():
     """检查监听器是否正在运行"""
@@ -994,6 +1038,17 @@ def reload_mappings():
         'sequence_mappings': sequence_mappings
     }
 
+
+def reload_and_restart_listener():
+    """
+    兼容 mouse_config 路由调用：在不破坏当前运行状态的前提下应用最新映射。
+    - 监听器运行中：仅热重载映射，不中断监听；
+    - 监听器未运行：尝试按当前平台启动（会做权限检查）。
+    """
+    if is_listener_running():
+        return reload_mappings()
+    return start_listener()
+
 # API 端点
 @router.post("/start")
 async def api_start_listener():
@@ -1019,7 +1074,7 @@ async def api_get_status():
 @router.post("/reload")
 async def api_reload_mappings():
     """重新加载按键映射"""
-    return reload_mappings()
+    return reload_and_restart_listener()
 
 @router.get("/mappings")
 async def api_get_mappings():
@@ -1032,10 +1087,36 @@ async def api_get_mappings():
 @router.get("/permission")
 async def api_check_permission():
     """检查辅助功能权限"""
-    check_accessibility_permission()
+    check_accessibility_permission(prompt=False)
     return {
         'has_permission': has_permission,
         'message': permission_message
+    }
+
+
+@router.post("/permission/request")
+async def api_request_permission():
+    """主动请求辅助功能权限并尝试启动监听器（macOS）。"""
+    if not is_mac:
+        return {'success': True, 'permission': True, 'message': '当前平台无需辅助功能权限'}
+
+    check_accessibility_permission(prompt=True)
+    if check_accessibility_permission(prompt=False):
+        if not is_listener_running():
+            return start_listener()
+        return {
+            'success': True,
+            'permission': True,
+            'message': '已获得辅助功能权限，监听器已就绪',
+            'permission_message': permission_message,
+        }
+
+    _open_macos_accessibility_settings()
+    return {
+        'success': False,
+        'permission': False,
+        'message': '尚未获得辅助功能权限，已打开系统设置页',
+        'permission_message': permission_message,
     }
 
 @router.get("/platform")
