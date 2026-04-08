@@ -23,9 +23,13 @@ let backendPort = DEFAULT_BACKEND_PORT;
 let mainWindow = null;
 let backendProcess = null;
 let launchInstanceToken = '';
+let isEnsuringBackend = false;
+let stoppingBackendPromise = null;
+let isShutdownInProgress = false;
+let isAppForceExiting = false;
 
 ipcMain.handle('kpsr-quit', () => {
-  app.quit();
+  void shutdownAppWithBackend();
 });
 
 /**
@@ -160,26 +164,118 @@ function waitForBackend(timeoutMs = 180000) {
   });
 }
 
-function stopBackend() {
-  if (!backendProcess || !backendProcess.pid) return;
-  const pid = backendProcess.pid;
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
   try {
-    treeKill(pid, 'SIGTERM', (err) => {
-      if (err) {
+    process.kill(pid, 0);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function waitForPidExit(pid, timeoutMs = 2000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!isProcessAlive(pid)) return true;
+    await delay(120);
+  }
+  return !isProcessAlive(pid);
+}
+
+async function stopBackend(timeoutMs = 4500) {
+  if (stoppingBackendPromise) return stoppingBackendPromise;
+
+  stoppingBackendPromise = (async () => {
+    if (!backendProcess || !backendProcess.pid) {
+      backendProcess = null;
+      return true;
+    }
+
+    const pid = backendProcess.pid;
+    const termBudget = Math.min(1600, Math.max(600, Math.floor(timeoutMs * 0.4)));
+    const killBudget = Math.max(400, timeoutMs - termBudget);
+
+    try {
+      await new Promise((resolve) => {
         try {
-          treeKill(pid, 'SIGKILL', () => {});
-        } catch (_) {}
+          treeKill(pid, 'SIGTERM', () => resolve());
+        } catch (_) {
+          resolve();
+        }
+      });
+      const exitedByTerm = await waitForPidExit(pid, termBudget);
+      if (!exitedByTerm && isProcessAlive(pid)) {
+        await new Promise((resolve) => {
+          try {
+            treeKill(pid, 'SIGKILL', () => resolve());
+          } catch (_) {
+            resolve();
+          }
+        });
+        await waitForPidExit(pid, killBudget);
       }
-    });
-    // 部分 macOS 场景下子进程会在 SIGTERM 后残留一小段时间，这里兜底补一次 SIGKILL。
-    setTimeout(() => {
+    } catch (_) {
+      // 忽略杀进程过程异常，退出链路继续推进
+    } finally {
+      backendProcess = null;
+    }
+    return true;
+  })();
+
+  try {
+    return await stoppingBackendPromise;
+  } finally {
+    stoppingBackendPromise = null;
+  }
+}
+
+async function shutdownAppWithBackend(exitCode = 0) {
+  if (isAppForceExiting || isShutdownInProgress) return;
+  isShutdownInProgress = true;
+  try {
+    await stopBackend();
+  } finally {
+    isAppForceExiting = true;
+    app.exit(exitCode);
+  }
+}
+
+function isBackendProcessAlive() {
+  if (!backendProcess || !backendProcess.pid) return false;
+  try {
+    process.kill(backendProcess.pid, 0);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function ensureBackendReadyForReopen() {
+  if (isEnsuringBackend) return false;
+  isEnsuringBackend = true;
+  try {
+    // 后端可达则直接复用
+    if (await waitForBackend(1500)) return true;
+
+    // 后端不可达且子进程已不存在时，尝试重启一次
+    if (!isBackendProcessAlive()) {
       try {
-        process.kill(pid, 0);
-        treeKill(pid, 'SIGKILL', () => {});
-      } catch (_) {}
-    }, 1500);
-  } catch (_) {}
-  backendProcess = null;
+        launchInstanceToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        startBackend();
+      } catch (e) {
+        console.warn('[KPSR] 二次启动时重启后端失败:', e);
+        return false;
+      }
+    }
+    return await waitForBackend(20000);
+  } finally {
+    isEnsuringBackend = false;
+  }
 }
 
 const LOADING_PAGE_HTML = `<!DOCTYPE html>
@@ -239,11 +335,27 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+  app.on('second-instance', async () => {
+    if (isShutdownInProgress || isAppForceExiting) return;
+    // 某些场景下旧实例仍在退出中，但主窗口已被销毁；
+    // 这时再次双击应用会命中 single-instance 分支，若不重建窗口会表现为“无法再次启动”。
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+      const ok = await ensureBackendReadyForReopen();
+      if (!ok) {
+        await dialog.showMessageBox({
+          type: 'error',
+          title: 'KPSR 跨屏输入',
+          message: '后端未就绪，无法恢复主界面',
+          detail: `请稍后重试；若持续失败，请先完全退出程序后再启动。\n当前端口：${backendPort}`,
+        });
+        return;
+      }
+      loadMainUiInWindow();
+      return;
     }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   });
 
   app.whenReady().then(async () => {
@@ -279,7 +391,7 @@ if (!gotLock) {
 
     const ok = await waitForBackend();
     if (!ok) {
-      stopBackend();
+      await stopBackend();
       await dialog.showMessageBox({
         type: 'error',
         title: 'KPSR 跨屏输入',
@@ -300,12 +412,14 @@ if (!gotLock) {
     });
   });
 
-  app.on('window-all-closed', () => {
-    stopBackend();
-    app.quit();
+  app.on('window-all-closed', (event) => {
+    event.preventDefault();
+    void shutdownAppWithBackend();
   });
 
-  app.on('before-quit', () => {
-    stopBackend();
+  app.on('before-quit', (event) => {
+    if (isAppForceExiting) return;
+    event.preventDefault();
+    void shutdownAppWithBackend();
   });
 }
