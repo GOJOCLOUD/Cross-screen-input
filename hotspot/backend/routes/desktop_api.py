@@ -112,10 +112,20 @@ async def get_status() -> Dict[str, Any]:
             data["server_running"] = False
 
         try:
-            from routes.mouse_listener import is_listener_running
+            from routes.mouse_listener import is_listener_running, get_permission_snapshot
             data["mouse_listener_status"] = is_listener_running()
+            data["mouse_permission"] = get_permission_snapshot()
+            data["mouse_permission_hint"] = data["mouse_permission"].get("message")
         except Exception:
             data["mouse_listener_status"] = False
+            data["mouse_permission"] = {
+                "platform": "unknown",
+                "has_accessibility": False,
+                "has_input_monitoring": False,
+                "all_granted": False,
+                "message": "权限状态读取失败",
+            }
+            data["mouse_permission_hint"] = "权限状态读取失败"
 
         data["timestamp"] = app_logger._create_entry("INFO", "", "desktop_api")[
             "timestamp"
@@ -133,6 +143,14 @@ async def get_status() -> Dict[str, Any]:
             "hotspot_connected": False,
             "hotspot_ip": None,
             "mouse_listener_status": False,
+            "mouse_permission": {
+                "platform": "unknown",
+                "has_accessibility": False,
+                "has_input_monitoring": False,
+                "all_granted": False,
+                "message": "状态获取失败",
+            },
+            "mouse_permission_hint": "状态获取失败",
             "error": str(e),
         }
 

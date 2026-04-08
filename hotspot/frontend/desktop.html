@@ -418,6 +418,13 @@
                     setStatus('hotspotDot', 'hotspotText', false, '', '未连接');
                 }
                 setStatus('mouseDot', 'mouseText', data.mouse_listener_status, '运行中', '已停止');
+                const permissionHint = (data.mouse_permission && data.mouse_permission.message)
+                    || data.mouse_permission_hint
+                    || '';
+                if (!data.mouse_listener_status && permissionHint) {
+                    const mouseText = document.getElementById('mouseText');
+                    if (mouseText) mouseText.textContent = permissionHint;
+                }
             } catch (e) {
                 console.error('加载状态失败:', e);
             }
