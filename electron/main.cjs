@@ -1,6 +1,13 @@
 /**
  * Electron 主进程：启动内嵌 Python 后端（打包后 resources/backend/kpsr-backend[.exe]），再打开本机 Web UI。
  */
+/**
+ * 某些环境（如 Cursor/IDE/CI）可能注入 ELECTRON_RUN_AS_NODE=1，
+ * 会导致 require('electron') 退化为可执行路径字符串，app/ipcMain 等 API 不可用并直接退出。
+ * 在主进程入口清理该变量，保证“安装后双击启动”不受外部环境污染。
+ */
+delete process.env.ELECTRON_RUN_AS_NODE;
+
 const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
