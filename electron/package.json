@@ -9,8 +9,8 @@
     "start": "node start-dev.cjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac --arm64 --dir",
-    "dist:mac:arm64": "electron-builder --mac --arm64 --dir"
+    "dist:mac": "electron-builder --mac dmg --arm64",
+    "dist:mac:arm64": "electron-builder --mac dmg --arm64"
   },
   "dependencies": {
     "tree-kill": "^1.2.2"
@@ -44,7 +44,7 @@
     "mac": {
       "target": [
         {
-          "target": "dir",
+          "target": "dmg",
           "arch": [
             "arm64"
           ]
