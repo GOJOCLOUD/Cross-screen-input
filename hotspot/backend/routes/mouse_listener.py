@@ -43,6 +43,8 @@ _mac_permission_prompted_once = False
 _listener_state_lock = threading.Lock()
 _mac_start_ready_event = None
 _mac_start_ok = False
+_mac_last_passive_start_attempt_ts = 0.0
+_MAC_PASSIVE_START_MIN_INTERVAL = 2.0
 
 # 鼠标按键映射
 button_mappings = {}  # 单键映射: {keyType: action}
@@ -567,7 +569,27 @@ def check_accessibility_permission(prompt: bool = False) -> bool:
         elif hasattr(Quartz, "AXIsProcessTrusted"):
             trusted = bool(Quartz.AXIsProcessTrusted())
 
-        if trusted:
+        # 某些系统状态下 AX 检测可能滞后，增加一次事件 tap 探针，降低“已授权但误判未授权”。
+        tap_probe_ok = False
+        try:
+            probe_tap = CGEventTapCreate(
+                kCGSessionEventTap,
+                kCGHeadInsertEventTap,
+                Quartz.kCGEventTapOptionListenOnly,
+                CGEventMaskBit(kCGEventOtherMouseDown),
+                lambda proxy, event_type, event, refcon: event,
+                None,
+            )
+            tap_probe_ok = probe_tap is not None
+            if probe_tap is not None:
+                try:
+                    Quartz.CFMachPortInvalidate(probe_tap)
+                except Exception:
+                    pass
+        except Exception:
+            tap_probe_ok = False
+
+        if trusted or tap_probe_ok:
             has_permission = True
             permission_message = "已获得辅助功能权限，鼠标侧键功能可用"
             app_logger.info(permission_message, source="mouse_listener")
@@ -643,7 +665,7 @@ def _mouse_callback(proxy, event_type, event, refcon):
         pass
     return event
 
-def _run_macos_listener():
+def _run_macos_listener(open_settings_on_fail: bool = True):
     """运行 macOS 监听器"""
     global _run_loop, _tap, is_listening, has_permission, permission_message, _mac_start_ok
     try:
@@ -658,7 +680,8 @@ def _run_macos_listener():
             _mac_start_ok = False
             if _mac_start_ready_event:
                 _mac_start_ready_event.set()
-            _open_macos_accessibility_settings()
+            if open_settings_on_fail:
+                _open_macos_accessibility_settings()
             is_listening = False
             return
         CGEventTapEnable(_tap, True)
@@ -677,6 +700,46 @@ def _run_macos_listener():
         if _mac_start_ready_event:
             _mac_start_ready_event.set()
         is_listening = False
+
+
+def _start_macos_listener_thread(open_settings_on_fail: bool, wait_timeout: float = 2.5) -> bool:
+    """启动 macOS 监听线程并等待结果。"""
+    global listener_thread, _mac_start_ready_event, _mac_start_ok
+    _mac_start_ready_event = threading.Event()
+    _mac_start_ok = False
+    listener_thread = threading.Thread(
+        target=lambda: _run_macos_listener(open_settings_on_fail=open_settings_on_fail),
+        daemon=True,
+    )
+    listener_thread.start()
+    _mac_start_ready_event.wait(timeout=wait_timeout)
+    return bool(_mac_start_ok)
+
+
+def _passive_recover_macos_listener():
+    """无弹窗被动恢复监听器：用于用户手动授权后自动生效，不打扰用户。"""
+    global _mac_last_passive_start_attempt_ts
+    if not is_mac:
+        return
+    if is_listening:
+        return
+
+    now = time.time()
+    if now - _mac_last_passive_start_attempt_ts < _MAC_PASSIVE_START_MIN_INTERVAL:
+        return
+    _mac_last_passive_start_attempt_ts = now
+
+    with _listener_state_lock:
+        if is_listening:
+            return
+        if not check_accessibility_permission(prompt=False):
+            return
+        load_mappings()
+        started = _start_macos_listener_thread(open_settings_on_fail=False, wait_timeout=1.2)
+        if started:
+            app_logger.info("检测到权限已生效，已自动恢复鼠标监听器", source="mouse_listener")
+        else:
+            app_logger.warning("权限已检测通过，但监听器被动恢复启动失败", source="mouse_listener")
 
 # ---------- Windows 监听器（Win32 低级钩子）----------
 _win_hook_handle = None
@@ -977,12 +1040,8 @@ def start_listener():
                     'permission_message': '鼠标钩子安装失败'
                 }
 
-        _mac_start_ready_event = threading.Event()
-        _mac_start_ok = False
-        listener_thread = threading.Thread(target=_run_macos_listener, daemon=True)
-        listener_thread.start()
-        _mac_start_ready_event.wait(timeout=2.5)
-        if _mac_start_ok:
+        started = _start_macos_listener_thread(open_settings_on_fail=True, wait_timeout=2.5)
+        if started:
             return {
                 'success': True,
                 'message': '鼠标监听器启动成功',
@@ -1087,6 +1146,8 @@ async def api_stop_listener():
 @router.get("/status")
 async def api_get_status():
     """获取监听器状态"""
+    if is_mac and not is_listening:
+        _passive_recover_macos_listener()
     return {
         'is_listening': is_listening,
         'permission': has_permission,
