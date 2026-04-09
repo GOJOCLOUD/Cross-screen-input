@@ -60,6 +60,13 @@ async def post_eula_accept() -> Dict[str, Any]:
                 ensure_ascii=False,
                 indent=2,
             )
+        # 同意协议后再启动试用期：试用开始时间与“同意协议”绑定，而不是首次访问激活接口绑定
+        try:
+            from routes.activation import start_trial_if_needed
+
+            start_trial_if_needed()
+        except Exception:
+            pass
         return {"success": True, "version": EULA_VERSION}
     except Exception as e:
         app_logger.error(f"写入 eula 失败: {e}", "desktop_api")

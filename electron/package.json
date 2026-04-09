@@ -10,7 +10,8 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac dmg --arm64",
-    "dist:mac:arm64": "electron-builder --mac dmg --arm64"
+    "dist:mac:arm64": "electron-builder --mac dmg --arm64",
+    "dist:win": "electron-builder --win nsis --x64"
   },
   "dependencies": {
     "tree-kill": "^1.2.2"
@@ -52,6 +53,17 @@
       ],
       "category": "public.app-category.utilities",
       "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
     }
   }
 }

@@ -35,6 +35,8 @@ is_listening = False
 _platform = get_platform()
 is_mac = _platform == 'macos'
 is_windows = _platform == 'windows'
+# Windows 打包时需要启用 Win32 低级钩子（WH_MOUSE_LL）。默认启用，可用环境变量关闭用于排查问题。
+ENABLE_WINDOWS_LL_HOOK = (os.environ.get("KPSR_ENABLE_WINDOWS_LL_HOOK", "1").strip() != "0")
 
 # 权限状态
 has_permission = None  # None=未检测, True=有权限, False=无权限
@@ -1049,6 +1051,13 @@ def start_listener():
         load_mappings()
 
         if is_windows:
+            if not ENABLE_WINDOWS_LL_HOOK:
+                return {
+                    'success': False,
+                    'message': 'Windows 低级鼠标钩子已被禁用（KPSR_ENABLE_WINDOWS_LL_HOOK=0）',
+                    'permission': has_permission,
+                    'permission_message': permission_message
+                }
             # 注意：不要在函数内再 import threading，否则 Python 会把 threading 视为整函内容的局部变量，
             # macOS 分支执行 listener_thread = threading.Thread(...) 时会报「引用前尚未赋值」。
             # 使用文件顶部已导入的 threading 模块即可。

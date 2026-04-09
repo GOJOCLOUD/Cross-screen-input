@@ -120,12 +120,12 @@ class RequestInterceptor:
             if path.startswith(endpoint):
                 return False, "在允许列表中"
         
-        # 检查激活状态（未激活时统一限制：仅放行激活、电脑端控制台与基础静态页）
+        # 检查激活/试用状态（未激活且不在试用期时统一限制：仅放行激活、电脑端控制台与基础静态页）
         try:
-            from routes.activation import load_activation_status
+            from routes.activation import is_phone_allowed_by_activation_or_trial
 
-            activation_status = load_activation_status()
-            if not activation_status.get("activated", False):
+            # 试用期内按“已激活”对待（放行主要功能）
+            if not is_phone_allowed_by_activation_or_trial():
                 if (
                     not path.startswith("/api/activation")
                     and not path.startswith("/api/interceptor")

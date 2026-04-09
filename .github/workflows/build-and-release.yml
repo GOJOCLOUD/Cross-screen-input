@@ -1,4 +1,4 @@
-name: Build macOS Distribution (Apple Silicon)
+name: Build Distribution (macOS + Windows)
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: macos-arm64-release-${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -251,5 +251,179 @@ jobs:
             macOS 应用包（仅 Apple Silicon / arm64）：
             - arm64（Apple Silicon）：`.dmg`（推荐安装包）
             - arm64（Apple Silicon）：`.app.zip`（调试备用）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: hotspot/backend/requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: electron/package.json
+
+      - name: Install Python deps + PyInstaller
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r hotspot/backend/requirements.txt
+          pip install "pyinstaller>=6.0"
+
+      - name: Run backend contract tests
+        shell: bash
+        run: |
+          PYTHONPATH="hotspot/backend" python -m unittest discover -s hotspot/backend/tests -p "test_*.py" -v
+
+      - name: Build backend binary (windows x64 host)
+        shell: bash
+        env:
+          # Win 打包必须启用 Win32 低级鼠标钩子（WH_MOUSE_LL）
+          KPSR_ENABLE_WINDOWS_LL_HOOK: "1"
+        run: |
+          cd hotspot/backend
+          pyinstaller \
+            --onedir \
+            --noconfirm \
+            --clean \
+            --name "${BACKEND_EXE_NAME}" \
+            --hidden-import uvicorn \
+            --hidden-import uvicorn.logging \
+            --hidden-import uvicorn.loops \
+            --hidden-import uvicorn.loops.auto \
+            --hidden-import uvicorn.protocols \
+            --hidden-import uvicorn.protocols.http \
+            --hidden-import uvicorn.protocols.http.auto \
+            --hidden-import uvicorn.protocols.websockets \
+            --hidden-import uvicorn.protocols.websockets.auto \
+            --hidden-import pydantic \
+            --hidden-import pydantic_settings \
+            --hidden-import pydantic_core \
+            --hidden-import fastapi \
+            --hidden-import starlette \
+            --hidden-import pynput \
+            --hidden-import pynput.keyboard \
+            --hidden-import pynput.mouse \
+            --hidden-import pyperclip \
+            --hidden-import PIL \
+            --hidden-import psutil \
+            --hidden-import websockets \
+            --hidden-import websockets.legacy \
+            --hidden-import websockets.legacy.server \
+            --hidden-import websockets.legacy.client \
+            --hidden-import python_multipart \
+            --collect-all cryptography \
+            --collect-all pynput \
+            --collect-all fastapi \
+            --collect-all starlette \
+            --collect-all uvicorn \
+            --add-data "../frontend;frontend" \
+            --add-data "data;data" \
+            --add-data "routes;routes" \
+            --add-data "utils;utils" \
+            --add-data "config.py;." \
+            main.py
+
+      - name: Stage backend for Electron
+        shell: bash
+        run: |
+          bin_dir="hotspot/backend/dist/${BACKEND_EXE_NAME}"
+          bin="${bin_dir}/${BACKEND_EXE_NAME}.exe"
+          test -d "${bin_dir}"
+          test -f "${bin}"
+          mkdir -p electron/resources/backend
+          rm -rf electron/resources/backend/*
+          cp -R "${bin_dir}/." electron/resources/backend/
+          rm -f electron/resources/backend/.gitkeep
+
+      - name: Prepare Windows app icon (.ico)
+        shell: bash
+        run: |
+          mkdir -p electron/build
+          src="hotspot/images/app-icon-1080x1080.png"
+          test -f "${src}"
+          python3 - <<'PY'
+          from PIL import Image
+          src = Image.open("hotspot/images/app-icon-1080x1080.png").convert("RGBA")
+          icon = src.resize((256, 256), Image.LANCZOS)
+          icon.save("electron/build/icon.ico", sizes=[(256, 256)])
+          PY
+          ls -la electron/build
+
+      - name: Install Electron deps
+        shell: bash
+        working-directory: electron
+        run: npm install
+
+      - name: Build Electron app (windows x64)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        working-directory: electron
+        run: npm run dist:win
+
+      - name: Collect windows package outputs
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          mkdir -p out/win-x64
+          compgen -G "electron/dist/*.exe" > /dev/null
+          cp -f electron/dist/*.exe out/win-x64/
+          (cd out/win-x64 && shasum -a 256 *.exe > SHA256SUMS.txt)
+          ls -la out/win-x64
+
+      - name: Move dev-latest-win tag to current commit (main only)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f dev-latest-win "${{ github.sha }}"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push -f origin dev-latest-win
+
+      - name: Publish dev pre-release (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-latest-win
+          name: "开发版 Windows（x64）"
+          prerelease: true
+          make_latest: false
+          overwrite: true
+          files: |
+            out/win-x64/*.exe
+            out/win-x64/SHA256SUMS.txt
+          body: |
+            Windows 开发版（x64）：
+            - 优先下载并运行安装程序（`.exe`）。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish release (tags only)
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: KPSR 跨屏输入（Windows）${{ github.ref_name }}
+          overwrite: true
+          files: |
+            out/win-x64/*.exe
+            out/win-x64/SHA256SUMS.txt
+          body: |
+            Windows 应用包（x64）：`.exe`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

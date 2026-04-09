@@ -10,7 +10,7 @@ import os
 import re
 import tempfile
 import threading
-from typing import Tuple
+from typing import Tuple, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -20,8 +20,8 @@ from utils.platform_utils import get_motherboard_uuid
 router = APIRouter()
 
 # ===== Trial / Free usage (offline) =====
-# 默认 30 秒试用（发布版）。可用环境变量覆盖，方便本地/CI 快速回归。
-DEFAULT_TRIAL_SECONDS = 30
+# 默认 7 天试用（发布版）。可用环境变量覆盖，方便本地/CI 快速回归。
+DEFAULT_TRIAL_SECONDS = 7 * 24 * 60 * 60
 TRIAL_SECONDS_ENV_KEYS = ("KPSR_TRIAL_SECONDS", "KPSR_TRIAL_SECS")
 TRIAL_CLOCK_ROLLBACK_TOLERANCE_SECONDS = 2
 
@@ -218,7 +218,9 @@ def load_activation_status() -> dict:
 
 def _ensure_trial_fields(status: dict) -> dict:
     """
-    确保试用字段存在。试用开始时间只在首次出现时写入。
+    确保试用字段存在。
+    - 未激活时：仅在“从未开始过试用”时写入 trial_started_at。
+      一旦试用到期，保持到期状态，不自动重开试用（否则永远不会进入未激活拦截态）。
     """
     status = dict(status or {})
     now = _now_ts()
@@ -228,7 +230,9 @@ def _ensure_trial_fields(status: dict) -> dict:
         status["trial_duration_seconds"] = _trial_duration_seconds()
         changed = True
 
-    if status.get("trial_started_at") is None:
+    # 仅在“未激活且从未开始过试用”时写入开始时间；不在到期时重置
+    activated = _coerce_activated_flag(status.get("activated", False))
+    if (not activated) and status.get("trial_started_at") is None:
         status["trial_started_at"] = now
         changed = True
 
@@ -245,6 +249,43 @@ def _ensure_trial_fields(status: dict) -> dict:
     return status
 
 
+def start_trial_if_needed(now_ts: Optional[int] = None) -> dict:
+    """
+    在“用户同意协议”的时点启动试用（仅一次，不续命）。
+    - 已激活：不启动试用
+    - 未激活且 trial_started_at 为空：写入 trial_started_at=now，并持久化
+    返回写入后的激活状态字典（便于调试/验证）。
+    """
+    try:
+        status = load_activation_status()
+        if _coerce_activated_flag(status.get("activated", False)):
+            return status
+        status = dict(status or {})
+        now = int(now_ts) if now_ts is not None else _now_ts()
+        changed = False
+
+        if status.get("trial_duration_seconds") is None:
+            status["trial_duration_seconds"] = _trial_duration_seconds()
+            changed = True
+        if status.get("trial_started_at") is None:
+            status["trial_started_at"] = now
+            changed = True
+        # 同意协议即视为“试用开始”，顺带初始化这些字段，避免 get_trial_snapshot 首次访问才落盘
+        if status.get("last_seen_at") is None:
+            status["last_seen_at"] = now
+            changed = True
+        if status.get("clock_rollback_detected") is None:
+            status["clock_rollback_detected"] = False
+            changed = True
+
+        if changed:
+            save_activation_status(status)
+        return status
+    except Exception:
+        # 不影响协议写入流程
+        return load_activation_status()
+
+
 def get_trial_snapshot() -> dict:
     """
     返回试用快照（不抛异常）。规则：
@@ -252,6 +293,39 @@ def get_trial_snapshot() -> dict:
     - 未激活：从 trial_started_at 起算 trial_duration_seconds
     - 若检测到明显时间回退：clock_rollback_detected=true，并直接视为到期
     """
+    # 试用期开始必须绑定“已同意用户协议”。
+    # 未同意前不初始化 trial_started_at，避免在未同意协议时被动“开跑”试用倒计时。
+    try:
+        # 复用 desktop_api 的持久化文件与版本号
+        from routes.desktop_api import EULA_FILE, EULA_VERSION  # type: ignore
+        import os as _os
+
+        accepted = False
+        if _os.path.isfile(EULA_FILE):
+            try:
+                import json as _json
+
+                with open(EULA_FILE, "r", encoding="utf-8") as _f:
+                    _j = _json.load(_f)
+                accepted = bool(_j.get("accepted")) and _j.get("version") == EULA_VERSION
+            except Exception:
+                accepted = False
+        if not accepted:
+            return {
+                "trial_active": False,
+                "trial_expired": False,
+                "trial_remaining_seconds": 0,
+                "clock_rollback_detected": False,
+            }
+    except Exception:
+        # 若协议状态读取失败，则保守：不自动开启试用
+        return {
+            "trial_active": False,
+            "trial_expired": False,
+            "trial_remaining_seconds": 0,
+            "clock_rollback_detected": False,
+        }
+
     status = load_activation_status()
     status = _ensure_trial_fields(status)
 
@@ -317,6 +391,21 @@ def is_phone_allowed_by_activation_or_trial() -> bool:
     供 main.py 等处调用：激活或试用未到期则允许手机端功能。
     """
     try:
+        # 未同意协议前，一律不放开手机端（避免绕过桌面端协议遮罩层）
+        try:
+            from routes.desktop_api import EULA_FILE, EULA_VERSION  # type: ignore
+            import os as _os
+            import json as _json
+
+            if not _os.path.isfile(EULA_FILE):
+                return False
+            with open(EULA_FILE, "r", encoding="utf-8") as _f:
+                _j = _json.load(_f)
+            if not (bool(_j.get("accepted")) and _j.get("version") == EULA_VERSION):
+                return False
+        except Exception:
+            return False
+
         status = load_activation_status()
         if _coerce_activated_flag(status.get("activated", False)):
             return True
@@ -372,16 +461,19 @@ def get_activation_status():
     from config import HTTP_PORT
 
     status = load_activation_status()
-    activated = _coerce_activated_flag(status.get("activated", False))
+    raw_activated = _coerce_activated_flag(status.get("activated", False))
     trial = get_trial_snapshot()
+    # 试用期内，对外表现为“已激活”
+    activated = bool(raw_activated or bool(trial.get("trial_active", False)))
     device_uuid = get_motherboard_uuid()
     ensure_station_for_current_network(port=HTTP_PORT)
     station = get_current_station()
     effective = getattr(station, "mode", "unknown") or "unknown"
-    phone_requires_activation = not (activated or bool(trial.get("trial_active", False)))
+    phone_requires_activation = not activated
 
     if activated:
-        msg = "已激活"
+        # 区分真实激活 vs 试用激活态，仅影响提示文案
+        msg = "已激活" if raw_activated else f"免费试用中，剩余 {int(trial.get('trial_remaining_seconds', 0))} 秒"
     else:
         if bool(trial.get("clock_rollback_detected", False)):
             msg = "检测到系统时间回退，请激活后使用手机端功能"

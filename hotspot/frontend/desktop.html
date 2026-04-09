@@ -535,8 +535,10 @@
                 data.activated = activated;
                 lastActivationUiState = activated;
 
-                // 左上角倒计时（仅未激活且试用中显示；用本地 tick 实现每秒变化）
-                if (!data.activated && !!data.trial_active) {
+                // 左上角倒计时（试用中显示；用本地 tick 实现每秒变化）
+                // 注意：后端在试用期内对外会表现为 activated=true，但 trial_active 仍为 true，
+                // 因此这里不能用 !data.activated 作为显示条件。
+                if (!!data.trial_active) {
                     startTrialCountdown(data.trial_remaining_seconds);
                 } else {
                     stopTrialCountdown();
@@ -756,6 +758,8 @@
 
         (async function boot() {
             try {
+                // 首次打开：必须同意协议才能继续；不同意则退出应用。
+                // 同意后：后端会在 /api/desktop/eula-accept 时刻开始试用期。
                 const eulaOk = await ensureEulaAccepted();
                 if (!eulaOk) return;
 
