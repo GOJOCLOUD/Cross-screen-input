@@ -376,13 +376,16 @@ jobs:
 
       - name: Collect windows package outputs
         if: github.event_name != 'pull_request'
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p out/win-x64
-          compgen -G "electron/dist/*.exe" > /dev/null
-          cp -f electron/dist/*.exe out/win-x64/
-          (cd out/win-x64 && shasum -a 256 *.exe > SHA256SUMS.txt)
-          ls -la out/win-x64
+          New-Item -ItemType Directory -Force -Path out/win-x64 | Out-Null
+          Copy-Item -Force electron/dist/*.exe out/win-x64/
+          $hashLines = Get-ChildItem out/win-x64/*.exe | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)"
+          }
+          $hashLines | Set-Content -Encoding ASCII out/win-x64/SHA256SUMS.txt
+          Get-ChildItem out/win-x64
 
       - name: Move dev-latest-win tag to current commit (main only)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
