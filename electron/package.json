@@ -17,10 +17,12 @@
     "tree-kill": "^1.2.2"
   },
   "devDependencies": {
+    "@electron/fuses": "^1.8.0",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8"
   },
   "build": {
+    "afterPack": "./after-pack.cjs",
     "appId": "com.gojocloud.crossscreeninput",
     "productName": "跨屏输入",
     "asar": true,

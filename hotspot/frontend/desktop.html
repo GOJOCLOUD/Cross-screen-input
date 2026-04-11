@@ -93,6 +93,25 @@
                         <span id="mouseText">检查中</span>
                     </span>
                 </div>
+                <div class="permission-mac-wrap" id="permissionMacWrap" hidden>
+                    <button type="button" class="permission-mac-toggle" id="permissionMacToggle" aria-expanded="false">
+                        <span>输入监控与辅助功能说明</span>
+                        <span class="permission-mac-chevron">▼</span>
+                    </button>
+                    <div class="permission-mac-panel" id="permissionMacPanel" hidden>
+                        <p class="permission-mac-lead">侧键映射依赖 macOS 授权。请在下列设置中勾选本应用（名称可能为「跨屏输入」或内嵌后端「kpsr-backend」）：</p>
+                        <ul class="permission-mac-list">
+                            <li><strong>辅助功能</strong>：隐私与安全性 → 辅助功能。</li>
+                            <li><strong>输入监控</strong>：隐私与安全性 → 输入监控。</li>
+                        </ul>
+                        <p class="permission-mac-note">应用<strong>不会</strong>自动弹出系统设置；请使用下方按钮按需打开。若已授权仍显示异常，可取消勾选后重新勾选，并完全退出本应用再启动。</p>
+                        <div class="permission-mac-actions">
+                            <button type="button" class="copy-btn permission-mac-btn" id="openAccessibilitySettingsBtn">打开「辅助功能」设置</button>
+                            <button type="button" class="copy-btn permission-mac-btn" id="openInputMonitoringSettingsBtn">打开「输入监控」设置</button>
+                            <button type="button" class="copy-btn permission-mac-btn permission-mac-btn--secondary" id="retryMouseListenerBtn">重新检测并启动监听</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -462,6 +481,52 @@
             }
         }
 
+        function updatePermissionMacVisibility(data) {
+            const wrap = document.getElementById('permissionMacWrap');
+            const mp = (data && data.mouse_permission) || {};
+            if (!wrap) return;
+            wrap.hidden = mp.platform !== 'macos';
+        }
+
+        function initPermissionMacHelp() {
+            const toggle = document.getElementById('permissionMacToggle');
+            const panel = document.getElementById('permissionMacPanel');
+            const chev = toggle ? toggle.querySelector('.permission-mac-chevron') : null;
+            if (toggle && panel) {
+                toggle.addEventListener('click', () => {
+                    const open = panel.hidden;
+                    panel.hidden = !open;
+                    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                    if (chev) chev.textContent = open ? '▲' : '▼';
+                });
+            }
+            const openAx = document.getElementById('openAccessibilitySettingsBtn');
+            if (openAx) {
+                openAx.addEventListener('click', async () => {
+                    try {
+                        await fetch('/api/mouse-listener/open-settings/accessibility', { method: 'POST' });
+                    } catch (e) { console.error(e); }
+                });
+            }
+            const openIm = document.getElementById('openInputMonitoringSettingsBtn');
+            if (openIm) {
+                openIm.addEventListener('click', async () => {
+                    try {
+                        await fetch('/api/mouse-listener/open-settings/input-monitoring', { method: 'POST' });
+                    } catch (e) { console.error(e); }
+                });
+            }
+            const retryBtn = document.getElementById('retryMouseListenerBtn');
+            if (retryBtn) {
+                retryBtn.addEventListener('click', async () => {
+                    try {
+                        await fetch('/api/mouse-listener/reload', { method: 'POST' });
+                        await loadStatus();
+                    } catch (e) { console.error(e); }
+                });
+            }
+        }
+
         function initPortSettings() {
             const btn = document.getElementById('savePortBtn');
             const msg = document.getElementById('portSaveMsg');
@@ -543,6 +608,7 @@
                     setStatus('hotspotDot', 'hotspotText', false, '', '未连接');
                 }
                 applyMouseStatusRow(data);
+                updatePermissionMacVisibility(data);
             } catch (e) {
                 console.error('加载状态失败:', e);
             }
@@ -667,6 +733,7 @@
                             const sd = await sr.json();
                             setStatus('serverDot', 'serverText', sd.server_running, '运行中', '已停止');
                             applyMouseStatusRow(sd);
+                            updatePermissionMacVisibility(sd);
                         } catch (e) { /* ignore */ }
                     } else {
                         const qrcodeElement = document.getElementById('qrcode');
@@ -815,6 +882,7 @@
                 initCopyBtn();
                 initActivationButtons();
                 initPortSettings();
+                initPermissionMacHelp();
                 await loadPortSettings();
                 await loadStatus();
                 await loadAccessInfo();

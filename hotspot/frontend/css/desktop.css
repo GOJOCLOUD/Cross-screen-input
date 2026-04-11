@@ -686,3 +686,86 @@ body {
 .agreement-btn.agree:hover {
     background: #333;
 }
+
+/* macOS 权限说明（可折叠，与协议区风格协调） */
+.permission-mac-wrap {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+}
+
+.permission-mac-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 10px 12px;
+    background: #fafafa;
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #333;
+    cursor: pointer;
+    text-align: left;
+}
+
+.permission-mac-toggle:hover {
+    background: #f3f3f3;
+}
+
+.permission-mac-chevron {
+    font-size: 12px;
+    color: #888;
+    margin-left: 8px;
+}
+
+.permission-mac-panel {
+    margin-top: 10px;
+    padding: 12px 14px;
+    background: #fafafa;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #444;
+}
+
+.permission-mac-lead {
+    margin-bottom: 8px;
+}
+
+.permission-mac-list {
+    margin: 0 0 10px 18px;
+}
+
+.permission-mac-list li {
+    margin-bottom: 6px;
+}
+
+.permission-mac-note {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 12px;
+}
+
+.permission-mac-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.permission-mac-btn {
+    padding: 8px 14px;
+    font-size: 13px;
+}
+
+.permission-mac-btn--secondary {
+    background: #fff;
+    color: #333;
+    border: 1px solid #ccc;
+}
+
+.permission-mac-btn--secondary:hover {
+    background: #f5f5f5;
+}

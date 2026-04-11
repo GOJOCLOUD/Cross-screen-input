@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # 说明：
-# - 默认只做「清理隔离属性」(xattr)，解决从网络下载后「无法打开」等问题。
-# - 请勿对 Electron 应用默认执行 `codesign --deep --sign -`：会破坏 ASAR 完整性校验
-#   （ElectronAsarIntegrity / enableEmbeddedAsarIntegrityValidation），表现为双击后秒退/闪退。
-# - 若你曾用旧版脚本对 .app 做过 ad-hoc deep 签名：请从 .dmg 重新安装一份，或删应用后重装。
-# - 仍需要 ad-hoc 签名时（不推荐）：设置环境变量 KPSR_ADHOC_CODESIGN=1 或传入第二个参数 --adhoc-codesign
+# - 默认：xattr -cr（清隔离属性），解决下载后「无法打开」。
+# - 可选 ad-hoc：官方构建已在打包阶段关闭「嵌入式 ASAR 完整性」fuse（electron/after-pack.cjs），
+#   因此对**当前流水线产出的 .app** 使用 `codesign --force --deep --sign -` 一般不会因 ASAR 秒退。
+# - 仍建议优先使用 CI 已签名/公证的安装包；本脚本仅供本机自签。
+# - 使用 ad-hoc：KPSR_ADHOC_CODESIGN=1 或参数 --adhoc-codesign
 
 APP_PATH="${1:-/Applications/跨屏输入.app}"
 DO_ADHOC="${KPSR_ADHOC_CODESIGN:-0}"
@@ -23,17 +23,14 @@ echo "清理扩展属性（隔离标记等）: ${APP_PATH}"
 xattr -cr "${APP_PATH}" || true
 
 if [[ "${DO_ADHOC}" == "1" ]]; then
-  echo ""
-  echo "警告: 即将对 Electron 应用执行 ad-hoc deep 签名，可能导致 ASAR 校验失败并闪退。"
-  echo "      若启动异常，请从官方 .dmg 重新安装，且勿再使用 --adhoc-codesign。"
-  echo "执行 ad-hoc 自签名: ${APP_PATH}"
+  echo "执行 ad-hoc 完整签名（deep）: ${APP_PATH}"
   codesign --force --deep --sign - "${APP_PATH}"
   echo "验证 codesign:"
   codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
-  echo "评估 Gatekeeper:"
+  echo "评估 Gatekeeper（ad-hoc 通常为 rejected，可忽略）:"
   spctl --assess --type execute -vv "${APP_PATH}" || true
 else
-  echo "已跳过 codesign（避免 Electron 闪退）。首次打开请尝试：右键 → 打开。"
+  echo "已跳过 codesign。若需本机 ad-hoc 完整签名，请使用: KPSR_ADHOC_CODESIGN=1 $0 \"${APP_PATH}\""
 fi
 
 echo "完成。"

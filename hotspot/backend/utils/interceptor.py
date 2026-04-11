@@ -130,6 +130,7 @@ class RequestInterceptor:
                     not path.startswith("/api/activation")
                     and not path.startswith("/api/interceptor")
                     and not path.startswith("/api/desktop/")
+                    and not path.startswith("/api/mouse-listener")
                     and not path == "/"
                     and not path.startswith("/frontend/")
                     and not path == "/phone"

@@ -41,13 +41,11 @@ ENABLE_WINDOWS_LL_HOOK = (os.environ.get("KPSR_ENABLE_WINDOWS_LL_HOOK", "1").str
 # 权限状态
 has_permission = None  # None=未检测, True=有权限, False=无权限
 permission_message = ""
-_mac_permission_prompted_once = False
-_mac_input_monitoring_prompted_once = False
 _listener_state_lock = threading.Lock()
 _mac_start_ready_event = None
 _mac_start_ok = False
 _mac_last_passive_start_attempt_ts = 0.0
-_MAC_PASSIVE_START_MIN_INTERVAL = 2.0
+_MAC_PASSIVE_START_MIN_INTERVAL = 5.0
 mac_accessibility_permission = None
 mac_input_monitoring_permission = None
 
@@ -681,46 +679,13 @@ def _refresh_mac_permission_summary() -> dict:
     }
 
 
-def ensure_macos_permissions_on_startup() -> bool:
-    """
-    启动阶段确保 macOS 权限（辅助功能 + 输入监控）：
-    1) 先静默检测；
-    2) 若未授权，本次进程各权限最多触发一次系统授权提示；
-    3) 若仍未授权，打开对应系统设置页，便于用户手动勾选。
-    """
-    global _mac_permission_prompted_once, _mac_input_monitoring_prompted_once
+def refresh_macos_permissions_silent() -> None:
+    """仅刷新权限快照（不弹系统授权窗、不自动打开系统设置）。由桌面页展示说明，用户自行前往设置。"""
     if not is_mac:
-        return True
-
+        return
     check_accessibility_permission(prompt=False)
     check_input_monitoring_permission(prompt=False)
-    summary = _refresh_mac_permission_summary()
-    if summary["all_granted"]:
-        app_logger.info(summary["message"], source="mouse_listener")
-        return True
-
-    if not _mac_permission_prompted_once:
-        _mac_permission_prompted_once = True
-        app_logger.info("首次启动触发辅助功能权限请求", source="mouse_listener")
-        check_accessibility_permission(prompt=True)
-    if not _mac_input_monitoring_prompted_once:
-        _mac_input_monitoring_prompted_once = True
-        app_logger.info("首次启动触发输入监控权限请求", source="mouse_listener")
-        check_input_monitoring_permission(prompt=True)
-
-    check_accessibility_permission(prompt=False)
-    check_input_monitoring_permission(prompt=False)
-    summary = _refresh_mac_permission_summary()
-    if summary["all_granted"]:
-        app_logger.info(summary["message"], source="mouse_listener")
-        return True
-
-    if not summary["has_accessibility"]:
-        _open_macos_accessibility_settings()
-    if not summary["has_input_monitoring"]:
-        _open_macos_input_monitoring_settings()
-    app_logger.warning(summary["message"], source="mouse_listener")
-    return False
+    _refresh_mac_permission_summary()
 
 def _mouse_callback(proxy, event_type, event, refcon):
     """macOS 鼠标事件回调"""
@@ -756,7 +721,7 @@ def _mouse_callback(proxy, event_type, event, refcon):
         pass
     return event
 
-def _run_macos_listener(open_settings_on_fail: bool = True):
+def _run_macos_listener(open_settings_on_fail: bool = False):
     """运行 macOS 监听器"""
     global _run_loop, _tap, is_listening, has_permission, permission_message, _mac_start_ok
     try:
@@ -826,15 +791,14 @@ def _passive_recover_macos_listener():
             return
         check_accessibility_permission(prompt=False)
         check_input_monitoring_permission(prompt=False)
-        summary = _refresh_mac_permission_summary()
-        if not summary["all_granted"]:
-            return
+        _refresh_mac_permission_summary()
+        # 系统 API 可能滞后误判「未授权」：仍尝试创建 tap；若权限实已授予，监听器可恢复
         load_mappings()
         started = _start_macos_listener_thread(open_settings_on_fail=False, wait_timeout=1.2)
         if started:
-            app_logger.info("检测到权限已生效，已自动恢复鼠标监听器", source="mouse_listener")
+            app_logger.info("已自动恢复鼠标监听器", source="mouse_listener")
         else:
-            app_logger.warning("权限已检测通过，但监听器被动恢复启动失败", source="mouse_listener")
+            app_logger.debug("被动恢复：监听器尚未启动（可能仍缺权限或需稍后重试）", source="mouse_listener")
 
 # ---------- Windows 监听器（Win32 低级钩子）----------
 _win_hook_handle = None
@@ -1040,13 +1004,8 @@ def start_listener():
                 'permission_message': permission_message
             }
 
-        if is_mac and not ensure_macos_permissions_on_startup():
-            return {
-                'success': False,
-                'message': '未获得完整权限（辅助功能+输入监控），已打开系统设置页，请授权后重试',
-                'permission': has_permission,
-                'permission_message': permission_message
-            }
+        if is_mac:
+            refresh_macos_permissions_silent()
 
         load_mappings()
 
@@ -1142,7 +1101,7 @@ def start_listener():
                     'permission_message': '鼠标钩子安装失败'
                 }
 
-        started = _start_macos_listener_thread(open_settings_on_fail=True, wait_timeout=2.5)
+        started = _start_macos_listener_thread(open_settings_on_fail=False, wait_timeout=2.5)
         if started:
             return {
                 'success': True,
@@ -1307,12 +1266,10 @@ async def api_check_permission():
 
 @router.post("/permission/request")
 async def api_request_permission():
-    """主动请求辅助功能与输入监控权限并尝试启动监听器（macOS）。"""
+    """重新检测权限并尝试启动监听器；不自动弹出系统授权窗（避免与桌面引导冲突）。"""
     if not is_mac:
         return {'success': True, 'permission': True, 'message': '当前平台无需权限'}
 
-    check_accessibility_permission(prompt=True)
-    check_input_monitoring_permission(prompt=True)
     check_accessibility_permission(prompt=False)
     check_input_monitoring_permission(prompt=False)
     summary = _refresh_mac_permission_summary()
@@ -1327,17 +1284,29 @@ async def api_request_permission():
             'permissions': summary,
         }
 
-    if not summary["has_accessibility"]:
-        _open_macos_accessibility_settings()
-    if not summary["has_input_monitoring"]:
-        _open_macos_input_monitoring_settings()
     return {
         'success': False,
         'permission': False,
-        'message': '尚未获得完整权限（辅助功能+输入监控），已打开系统设置页',
+        'message': '尚未获得完整权限（辅助功能+输入监控）。请在桌面页「鼠标监听」旁展开说明，并手动打开系统设置勾选本应用。',
         'permission_message': permission_message,
         'permissions': summary,
     }
+
+@router.post("/open-settings/accessibility")
+async def api_open_accessibility_settings():
+    """仅应用户从桌面页点击触发：打开 macOS「辅助功能」设置（不自动调用）。"""
+    if is_mac:
+        _open_macos_accessibility_settings()
+    return {"success": True}
+
+
+@router.post("/open-settings/input-monitoring")
+async def api_open_input_monitoring_settings():
+    """仅应用户从桌面页点击触发：打开 macOS「输入监控」设置（不自动调用）。"""
+    if is_mac:
+        _open_macos_input_monitoring_settings()
+    return {"success": True}
+
 
 @router.get("/platform")
 async def api_get_platform():
