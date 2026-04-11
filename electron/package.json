@@ -24,6 +24,9 @@
     "appId": "com.gojocloud.crossscreeninput",
     "productName": "跨屏输入",
     "asar": true,
+    "electronFuses": {
+      "enableEmbeddedAsarIntegrityValidation": false
+    },
     "directories": {
       "output": "dist",
       "buildResources": "build"
