@@ -216,7 +216,7 @@ async function loadActivationStatus() {
             if (activationDot) activationDot.className = 'status-dot online';
             if (activationText) activationText.textContent = '已激活';
             if (activatedStatus) activatedStatus.style.display = 'flex';
-            if (activatedAction) activatedAction.style.display = 'flex';
+            if (activatedAction) activatedAction.style.display = 'none';
             if (unactivatedStatus) unactivatedStatus.style.display = 'none';
             if (uuidRow) uuidRow.style.display = 'none';
             if (licenseRow) licenseRow.style.display = 'none';

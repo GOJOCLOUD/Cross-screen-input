@@ -10,6 +10,7 @@ clean_activation_json() {
   "activated": false,
   "uuid": "",
   "license_blob": "",
+  "license_ever_activated": false,
   "trial_duration_seconds": 30,
   "clock_rollback_detected": false
 }

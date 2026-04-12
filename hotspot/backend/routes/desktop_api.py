@@ -92,6 +92,8 @@ async def post_trial_start() -> Dict[str, Any]:
 
         start_trial_if_needed()
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         app_logger.error(f"trial-start 失败: {e}", "desktop_api")
         raise HTTPException(status_code=500, detail="试用启动失败") from e

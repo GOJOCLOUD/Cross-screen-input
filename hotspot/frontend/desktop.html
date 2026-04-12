@@ -46,7 +46,7 @@
     <div class="container">
         <header class="header">
             <h1 class="title">跨屏输入</h1>
-            <p class="version">v1.0.4</p>
+            <p class="version">v1.0.5</p>
         </header>
 
         <!-- 二维码 -->
@@ -884,9 +884,9 @@
                     activationDot.className = 'status-dot online';
                     activationText.textContent = '已激活';
                     document.getElementById('activatedStatus').style.display = 'block';
-                    /* 仅正式激活码显示「取消激活」；纯试用解锁不显示，避免误点清空 license 并引发异常流程 */
+                    /* 正式激活后不提供「取消激活」，避免卸载许可后再次试用 */
                     const actAction = document.getElementById('activatedAction');
-                    if (actAction) actAction.style.display = normalizeActivationFlag(data.license_activated) ? 'block' : 'none';
+                    if (actAction) actAction.style.display = 'none';
                     document.getElementById('unactivatedStatus').style.display = 'none';
                     document.getElementById('uuidRow').style.display = 'none';
                     document.getElementById('licenseRow').style.display = 'none';

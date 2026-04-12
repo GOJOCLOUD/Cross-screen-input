@@ -272,6 +272,12 @@ def start_trial_if_needed(now_ts: Optional[int] = None) -> dict:
         status = load_activation_status()
         if _coerce_activated_flag(status.get("activated", False)):
             return status
+        # 本机曾成功写入过激活码：不再允许开始试用（防取消激活后重复试用）
+        if _coerce_activated_flag(status.get("license_ever_activated", False)):
+            raise HTTPException(
+                status_code=400,
+                detail="本机曾使用激活码正式激活，无法再次开始试用",
+            )
         status = dict(status or {})
         now = int(now_ts) if now_ts is not None else _now_ts()
         changed = False
@@ -562,11 +568,12 @@ def activate_license(request: ActivationRequest):
             detail="激活码无效" if reason != "device_mismatch" else "激活码与当前设备不匹配",
         )
 
-    status = {
-        "activated": True,
-        "uuid": current_uuid,
-        "license_blob": request.license_key.strip(),
-    }
+    prev = load_activation_status()
+    status = dict(prev) if isinstance(prev, dict) else {}
+    status["activated"] = True
+    status["uuid"] = current_uuid
+    status["license_blob"] = request.license_key.strip()
+    status["license_ever_activated"] = True
 
     if save_activation_status(status):
         return {
