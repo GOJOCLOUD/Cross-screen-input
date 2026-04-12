@@ -21,6 +21,10 @@
         <div id="trialHudExpired" class="trial-hud-row trial-hud-row--solo">
             <button type="button" class="agreement-link-btn" data-eula-help title="查看用户协议">?</button>
         </div>
+        <!-- 正式激活后仍保留用户协议入口（仅问号，与试用区互斥显示） -->
+        <div id="trialHudLicensed" class="trial-hud-row trial-hud-row--solo" style="display: none;">
+            <button type="button" class="agreement-link-btn" data-eula-help title="查看用户协议">?</button>
+        </div>
     </div>
     <!-- 用户协议遮罩层 -->
     <div id="agreementModal" class="agreement-modal">
@@ -42,7 +46,7 @@
     <div class="container">
         <header class="header">
             <h1 class="title">跨屏输入</h1>
-            <p class="version">v1.0.1</p>
+            <p class="version">v1.0.4</p>
         </header>
 
         <!-- 二维码 -->
@@ -414,14 +418,21 @@
             const elIdle = document.getElementById('trialHudIdle');
             const elActive = document.getElementById('trialHudActive');
             const elExpired = document.getElementById('trialHudExpired');
+            const elLicensed = document.getElementById('trialHudLicensed');
             if (!hud || !elIdle || !elActive || !elExpired) return;
             const licensed =
                 data.license_activated === true
                 || (data.activated === true && data.trial_active === false && !data.trial_expired);
             if (licensed) {
-                hud.style.display = 'none';
+                /* 正式激活/等价解锁：保留左上角条，仅显示用户协议「?」，不隐藏整块 HUD */
+                hud.style.display = 'flex';
+                elIdle.style.display = 'none';
+                elActive.style.display = 'none';
+                elExpired.style.display = 'none';
+                if (elLicensed) elLicensed.style.display = 'flex';
                 return;
             }
+            if (elLicensed) elLicensed.style.display = 'none';
             hud.style.display = 'flex';
             const act = !!data.trial_active;
             const exp = !!data.trial_expired;
