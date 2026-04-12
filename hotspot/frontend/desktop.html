@@ -313,12 +313,15 @@
             return false;
         }
 
-        /** 是否视为「已解锁」（正式激活码 或 试用进行中）；不依赖笼统的 activated，避免误跳 */
+        /**
+         * 是否视为「已解锁」：仅以 license_activated / trial_active 为准（normalize 兼容字符串脏数据）。
+         * 绝不使用接口里的聚合字段 activated 作为兜底——该字段易与业务上其它「状态」混淆，且缺字段时会错误回退导致误判「已激活」。
+         */
         function computeFullyUnlocked(d) {
             if (!d) return false;
-            if (d.license_activated === true || d.trial_active === true) return true;
-            if (d.license_activated === false && d.trial_active === false) return false;
-            return normalizeActivationFlag(d.activated);
+            if (normalizeActivationFlag(d.license_activated)) return true;
+            if (normalizeActivationFlag(d.trial_active)) return true;
+            return false;
         }
 
         function hideAgreementModal() {
@@ -839,7 +842,6 @@
                 const activationText = document.getElementById('activationText');
                 if (!activationDot || !activationText) return;
 
-                const needBlock = !fullyUnlocked;
                 const unactivatedMsg = document.getElementById('unactivatedStatusText');
                 if (data.message && unactivatedMsg) unactivatedMsg.textContent = data.message;
 
@@ -880,52 +882,35 @@
                     const uuidDisplay = document.getElementById('uuidDisplay');
                     if (uuidDisplay) uuidDisplay.textContent = data.uuid || '获取失败';
 
-                    if (needBlock) {
-                        const qrcodeElement = document.getElementById('qrcode');
-                        const qrcodeTip = document.querySelector('.qrcode-tip');
-                        if (qrcodeElement) {
-                            qrcodeElement.style.filter = 'none';
-                            qrcodeElement.innerHTML = '<p style="color:#999;padding:40px;font-size:14px;text-align:center;">' + MSG_NEED_ACTIVATE + '</p>';
-                        }
-                        if (qrcodeTip) {
-                            qrcodeTip.textContent = MSG_NEED_ACTIVATE;
-                            qrcodeTip.style.color = '#999';
-                        }
-                        const linkDisplay = document.getElementById('linkDisplay');
-                        if (linkDisplay) {
-                            linkDisplay.textContent = MSG_NEED_ACTIVATE;
-                            linkDisplay.style.color = '#999';
-                        }
-                        document.getElementById('copyBtn').style.display = 'none';
-                        document.getElementById('portText').textContent = '激活后可见';
-                        const ipEl = document.getElementById('hotspotText');
-                        const ipDot = document.getElementById('hotspotDot');
-                        if (ipEl) ipEl.textContent = '激活后可见';
-                        if (ipDot) ipDot.className = 'status-dot offline';
-                        try {
-                            const sr = await fetch('/api/desktop/status');
-                            const sd = await sr.json();
-                            setStatus('serverDot', 'serverText', sd.server_running, '运行中', '已停止');
-                            applyMouseStatusRow(sd);
-                            updatePermissionMacVisibility(sd);
-                        } catch (e) { /* ignore */ }
-                    } else {
-                        const qrcodeElement = document.getElementById('qrcode');
-                        const qrcodeTip = document.querySelector('.qrcode-tip');
-                        if (qrcodeElement) qrcodeElement.style.filter = 'none';
-                        if (qrcodeTip) {
-                            qrcodeTip.textContent = TIP_UNIFIED;
-                            qrcodeTip.style.color = '';
-                        }
-                        const linkDisplay = document.getElementById('linkDisplay');
-                        if (linkDisplay) {
-                            linkDisplay.style.display = 'block';
-                            linkDisplay.style.color = '';
-                        }
-                        document.getElementById('copyBtn').style.display = 'block';
-                        await refreshNetworkPanel();
-                        if (gen !== activationStatusFetchGen) return;
+                    /* 未解锁：统一遮罩二维码/链接（仅当 license / 试用 任一成立时 refreshNetworkPanel 才会在上方分支执行） */
+                    const qrcodeElement = document.getElementById('qrcode');
+                    const qrcodeTip = document.querySelector('.qrcode-tip');
+                    if (qrcodeElement) {
+                        qrcodeElement.style.filter = 'none';
+                        qrcodeElement.innerHTML = '<p style="color:#999;padding:40px;font-size:14px;text-align:center;">' + MSG_NEED_ACTIVATE + '</p>';
                     }
+                    if (qrcodeTip) {
+                        qrcodeTip.textContent = MSG_NEED_ACTIVATE;
+                        qrcodeTip.style.color = '#999';
+                    }
+                    const linkDisplay = document.getElementById('linkDisplay');
+                    if (linkDisplay) {
+                        linkDisplay.textContent = MSG_NEED_ACTIVATE;
+                        linkDisplay.style.color = '#999';
+                    }
+                    document.getElementById('copyBtn').style.display = 'none';
+                    document.getElementById('portText').textContent = '激活后可见';
+                    const ipEl = document.getElementById('hotspotText');
+                    const ipDot = document.getElementById('hotspotDot');
+                    if (ipEl) ipEl.textContent = '激活后可见';
+                    if (ipDot) ipDot.className = 'status-dot offline';
+                    try {
+                        const sr = await fetch('/api/desktop/status');
+                        const sd = await sr.json();
+                        setStatus('serverDot', 'serverText', sd.server_running, '运行中', '已停止');
+                        applyMouseStatusRow(sd);
+                        updatePermissionMacVisibility(sd);
+                    } catch (e) { /* ignore */ }
                 }
             } catch (error) {
                 console.error('加载激活状态失败:', error);
