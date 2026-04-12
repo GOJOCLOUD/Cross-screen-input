@@ -11,6 +11,7 @@
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac dmg --arm64",
     "dist:mac:arm64": "electron-builder --mac dmg --arm64",
+    "sign:mac": "KPSR_ADHOC_CODESIGN=1 bash ../self_sign_app.sh \"dist/mac-arm64/跨屏输入.app\"",
     "dist:win": "electron-builder --win nsis --x64"
   },
   "dependencies": {
