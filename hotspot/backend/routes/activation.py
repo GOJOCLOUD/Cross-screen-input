@@ -20,7 +20,7 @@ from utils.platform_utils import get_motherboard_uuid
 router = APIRouter()
 
 # ===== Trial / Free usage (offline) =====
-# 默认 7 天试用（发布版）。可用环境变量覆盖，方便本地/CI 快速回归。
+# 默认试用秒数（安装包常配合 KPSR_TRIAL_SECONDS）。可用环境变量覆盖。
 DEFAULT_TRIAL_SECONDS = 30
 TRIAL_SECONDS_ENV_KEYS = ("KPSR_TRIAL_SECONDS", "KPSR_TRIAL_SECS")
 TRIAL_CLOCK_ROLLBACK_TOLERANCE_SECONDS = 2
@@ -265,7 +265,8 @@ def start_trial_if_needed(now_ts: Optional[int] = None) -> dict:
     """
     在用户点击「开始试用」并同意协议后调用（POST /api/desktop/trial-start）。仅一次，不续命。
     - 已激活：不启动试用
-    - 未激活：写入 trial_started_at、trial_explicit_started=true
+    - 未激活：首次写入 trial_started_at、trial_explicit_started=true
+    - 首次开始时强制将 trial_duration_seconds 与当前产品/环境一致，避免 activation.json 里残留 7 天等旧值。
     """
     try:
         status = load_activation_status()
@@ -275,22 +276,30 @@ def start_trial_if_needed(now_ts: Optional[int] = None) -> dict:
         now = int(now_ts) if now_ts is not None else _now_ts()
         changed = False
 
-        if status.get("trial_duration_seconds") is None:
-            status["trial_duration_seconds"] = _trial_duration_seconds()
-            changed = True
-        if status.get("trial_started_at") is None:
+        first_start = status.get("trial_started_at") is None
+        if first_start:
             status["trial_started_at"] = now
-            changed = True
-        if status.get("trial_explicit_started") is not True:
+            status["trial_duration_seconds"] = _trial_duration_seconds()
             status["trial_explicit_started"] = True
+            if status.get("last_seen_at") is None:
+                status["last_seen_at"] = now
+            if status.get("clock_rollback_detected") is None:
+                status["clock_rollback_detected"] = False
             changed = True
-        # 与 trial_started_at 同步写入，标记为「用户显式开始试用」
-        if status.get("last_seen_at") is None:
-            status["last_seen_at"] = now
-            changed = True
-        if status.get("clock_rollback_detected") is None:
-            status["clock_rollback_detected"] = False
-            changed = True
+        else:
+            # 已开过试用：不续期、不改时长
+            if status.get("trial_explicit_started") is not True:
+                status["trial_explicit_started"] = True
+                changed = True
+            if status.get("trial_duration_seconds") is None:
+                status["trial_duration_seconds"] = _trial_duration_seconds()
+                changed = True
+            if status.get("last_seen_at") is None:
+                status["last_seen_at"] = now
+                changed = True
+            if status.get("clock_rollback_detected") is None:
+                status["clock_rollback_detected"] = False
+                changed = True
 
         if changed:
             save_activation_status(status)
@@ -572,13 +581,14 @@ def activate_license(request: ActivationRequest):
 @router.post("/deactivate")
 def deactivate_license():
     """
-    取消激活
+    取消激活码（清除 license_blob）。
+    合并写入，保留试用相关字段，避免整表覆盖导致「试用记录被清空 → 又可点一次试用」的异常。
     """
-    status = {
-        "activated": False,
-        "uuid": get_motherboard_uuid(),
-        "license_blob": "",
-    }
+    prev = load_activation_status()
+    status = dict(prev) if isinstance(prev, dict) else {}
+    status["activated"] = False
+    status["license_blob"] = ""
+    status["uuid"] = get_motherboard_uuid()
 
     if save_activation_status(status):
         return {"status": "success", "success": True, "message": "已取消激活"}

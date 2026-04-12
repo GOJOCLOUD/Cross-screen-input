@@ -643,6 +643,15 @@
                         const j = await res.json().catch(() => ({}));
                         if (!res.ok) console.warn('restart listener:', res.status, j);
                         await loadStatus();
+                        /* 未试用/未正式激活时 loadStatus 会写出真实端口与 IP，需重新遮罩 */
+                        if (lastActivationUiState !== true) {
+                            const pt = document.getElementById('portText');
+                            const ipEl = document.getElementById('hotspotText');
+                            const ipDot = document.getElementById('hotspotDot');
+                            if (pt) pt.textContent = '激活后可见';
+                            if (ipEl) ipEl.textContent = '激活后可见';
+                            if (ipDot) ipDot.className = 'status-dot offline';
+                        }
                     } catch (e) {
                         console.error(e);
                     } finally {
@@ -864,7 +873,9 @@
                     activationDot.className = 'status-dot online';
                     activationText.textContent = '已激活';
                     document.getElementById('activatedStatus').style.display = 'block';
-                    document.getElementById('activatedAction').style.display = 'block';
+                    /* 仅正式激活码显示「取消激活」；纯试用解锁不显示，避免误点清空 license 并引发异常流程 */
+                    const actAction = document.getElementById('activatedAction');
+                    if (actAction) actAction.style.display = normalizeActivationFlag(data.license_activated) ? 'block' : 'none';
                     document.getElementById('unactivatedStatus').style.display = 'none';
                     document.getElementById('uuidRow').style.display = 'none';
                     document.getElementById('licenseRow').style.display = 'none';

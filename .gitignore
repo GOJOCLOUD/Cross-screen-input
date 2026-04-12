@@ -14,10 +14,5 @@ hotspot/backend/build/
 electron/node_modules/
 electron/dist/
 
-# 激活码签发私钥（仅维护者本地保留，勿提交）
+# 激活码签发私钥（勿提交；脚本在 scripts/ 可入库，私钥仅本机备份）
 activation_ed25519_private.pem
-
-# 许可证签发脚本（仅维护者本地使用，勿提交）
-scripts/issue_license.py
-scripts/license_issuer_web.py
-scripts/start_license_issuer_web.sh
