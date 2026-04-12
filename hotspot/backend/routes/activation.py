@@ -62,7 +62,7 @@ PRODUCT_ID = "cross-screen-input"
 LICENSE_FORMAT_PREFIX = "cs1"
 
 # 打包进客户端的公钥（Raw 32 字节 → Base64）。轮换密钥时同步修改此处并发新包。
-ACTIVATION_PUBLIC_KEY_B64 = "Bp9aJGLCcU9HGyThWJsKJteov2ugVLF4PeJzTqfueXE="
+ACTIVATION_PUBLIC_KEY_B64 = "k7fUyHEgw+TwV/XxbvAwJrbbUmjOqnFfppxpAbJD4zA="
 
 # 激活文件路径（使用 config 的 DATA_DIR，兼容打包与多平台）
 try:
