@@ -30,17 +30,26 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate signing and notarization secrets (tags only)
+      - name: Detect signing availability (tags only)
+        id: signing
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
           required=(CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER)
+          missing=0
           for k in "${required[@]}"; do
             if [[ -z "${!k:-}" ]]; then
-              echo "Missing required secret for release tag: $k"
-              exit 1
+              echo "missing_secret=$k" >> "$GITHUB_OUTPUT"
+              missing=1
             fi
           done
+          if [[ "$missing" -eq 1 ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets missing; will build unsigned for this tag."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets present; will build signed for this tag."
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -166,14 +175,14 @@ jobs:
         working-directory: electron
         run: npm install
 
-      - name: Build Electron app (arm64 only, unsigned for main/pr)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      - name: Build Electron app (arm64 only, unsigned)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') || (startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.available != 'true') }}
         shell: bash
         working-directory: electron
         run: npm run dist:mac:arm64 -- --config.mac.identity=null
 
       - name: Build Electron app (arm64 only, signed for tags)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.available == 'true' }}
         shell: bash
         working-directory: electron
         env:
