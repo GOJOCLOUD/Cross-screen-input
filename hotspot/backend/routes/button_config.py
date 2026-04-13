@@ -26,6 +26,7 @@ router = APIRouter()
 
 # 请求模型
 class ButtonConfig(BaseModel):
+    id: Optional[str] = Field(default=None, min_length=3, max_length=64, description="按钮ID（可选；提供后用于幂等新增）")
     name: str = Field(..., min_length=1, max_length=20, description="按钮名称")
     icon: Optional[str] = Field(default="🔘", max_length=10, description="按钮图标")
     type: str = Field(..., description="操作类型")
@@ -35,6 +36,15 @@ class ButtonConfig(BaseModel):
     autoCloseDuration: Optional[int] = Field(default=None, ge=0, description="自动关闭时长（秒），0或None表示不自动关闭，仅用于toggle类型")
     order: Optional[int] = Field(default=None, ge=0, description="排序顺序")
     
+    @validator('id')
+    def validate_id(cls, v):
+        if not v:
+            return v
+        # 允许前端生成的 btn_*，并限制字符范围，避免注入/路径类问题
+        if not re.match(r'^[a-zA-Z0-9_-]+$', v):
+            raise ValueError('按钮ID格式不正确，只允许字母、数字、下划线和短横线')
+        return v
+
     @validator('type')
     def validate_type(cls, v):
         if v not in ['single', 'multi', 'toggle']:

@@ -8,6 +8,13 @@ let editingButtonId = null;
 // 当前编辑的鼠标按钮ID
 let editingMouseButtonId = null;
 
+// 新增按钮的“幂等ID”：新增模式下保持不变，避免连点/重试造成重复新增
+let pendingNewButtonId = null;
+
+// 保存操作单飞行锁，防止重复点击触发多次提交
+let isSavingButton = false;
+let isSavingMouseButton = false;
+
 // 自动关闭定时器管理
 const autoCloseTimers = {};  // 存储每个按钮的定时器ID
 
@@ -1664,6 +1671,8 @@ function removeCountdownBar(buttonElement) {
     // 表单操作函数
     window.showAddForm = function() {
         editingButtonId = null;  // 清空编辑ID，确保是新增模式
+        // 为本次“新增”生成并固定一个ID，用于幂等新增（重复提交不会生成多条）
+        pendingNewButtonId = (typeof window.generateButtonId === 'function') ? window.generateButtonId() : ('btn_' + Date.now());
         const form = document.getElementById('configForm');
         if (form) {
             form.style.display = 'block';
@@ -1791,6 +1800,19 @@ function removeCountdownBar(buttonElement) {
 
     // 保存按钮
     window.saveButton = async function() {
+        if (isSavingButton) {
+            return;
+        }
+        isSavingButton = true;
+
+        // 尽可能禁用保存按钮，避免连点（DOM为动态生成，使用querySelector）
+        const saveBtn = document.querySelector('#configForm .save-button');
+        const prevSaveBtnText = saveBtn ? saveBtn.textContent : null;
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = '保存中...';
+        }
+
         const name = document.getElementById('buttonName').value.trim();
         const icon = document.getElementById('buttonIcon').value.trim();
         const actionType = document.getElementById('actionType').value;
@@ -1798,6 +1820,11 @@ function removeCountdownBar(buttonElement) {
         // 验证按钮名称
         if (!name) {
             showFieldError(document.getElementById('buttonName'), CONFIG.ERROR_MESSAGES.MISSING_NAME);
+            isSavingButton = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = prevSaveBtnText || '保存';
+            }
             return;
         } else {
             hideFieldError(document.getElementById('buttonName'));
@@ -1805,6 +1832,11 @@ function removeCountdownBar(buttonElement) {
         
         if (name.length > CONFIG.VALIDATION.MAX_BUTTON_NAME_LENGTH) {
             showFieldError(document.getElementById('buttonName'), CONFIG.ERROR_MESSAGES.NAME_TOO_LONG);
+            isSavingButton = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = prevSaveBtnText || '保存';
+            }
             return;
         } else {
             hideFieldError(document.getElementById('buttonName'));
@@ -1819,6 +1851,12 @@ function removeCountdownBar(buttonElement) {
             icon: sanitizedIcon || '🔘',
             type: actionType
         };
+
+        // 新增模式下：带上固定 id，保证幂等（后端会用 id 做 upsert）
+        if (!editingButtonId) {
+            buttonData.id = pendingNewButtonId || ((typeof window.generateButtonId === 'function') ? window.generateButtonId() : ('btn_' + Date.now()));
+            pendingNewButtonId = buttonData.id;
+        }
         
         if (actionType === 'single') {
             const shortcut = document.getElementById('singleShortcut').value.trim();
@@ -1826,6 +1864,11 @@ function removeCountdownBar(buttonElement) {
             
             if (!validation.valid) {
                 showFieldError(document.getElementById('singleShortcut'), validation.message);
+                isSavingButton = false;
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = prevSaveBtnText || '保存';
+                }
                 return;
             } else {
                 hideFieldError(document.getElementById('singleShortcut'));
@@ -1859,11 +1902,21 @@ function removeCountdownBar(buttonElement) {
             });
             
             if (hasError) {
+                isSavingButton = false;
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = prevSaveBtnText || '保存';
+                }
                 return;
             }
             
             if (actions.length === 0) {
                 showToast(CONFIG.ERROR_MESSAGES.MISSING_ACTIONS);
+                isSavingButton = false;
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = prevSaveBtnText || '保存';
+                }
                 return;
             }
             
@@ -1880,6 +1933,11 @@ function removeCountdownBar(buttonElement) {
             
             if (!activateValidation.valid) {
                 showFieldError(document.getElementById('activateShortcut'), activateValidation.message);
+                isSavingButton = false;
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = prevSaveBtnText || '保存';
+                }
                 return;
             } else {
                 hideFieldError(document.getElementById('activateShortcut'));
@@ -1887,6 +1945,11 @@ function removeCountdownBar(buttonElement) {
             
             if (!deactivateValidation.valid) {
                 showFieldError(document.getElementById('deactivateShortcut'), deactivateValidation.message);
+                isSavingButton = false;
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = prevSaveBtnText || '保存';
+                }
                 return;
             } else {
                 hideFieldError(document.getElementById('deactivateShortcut'));
@@ -1899,6 +1962,11 @@ function removeCountdownBar(buttonElement) {
                 const duration = parseInt(autoCloseInput.value.trim(), 10);
                 if (isNaN(duration) || duration < 0) {
                     showToast('自动关闭时长必须是大于等于0的整数（秒）');
+                    isSavingButton = false;
+                    if (saveBtn) {
+                        saveBtn.disabled = false;
+                        saveBtn.textContent = prevSaveBtnText || '保存';
+                    }
                     return;
                 } else {
                     autoCloseDuration = duration === 0 ? null : duration;  // 0表示不自动关闭
@@ -1933,8 +2001,16 @@ function removeCountdownBar(buttonElement) {
             
             // 清除编辑ID
             editingButtonId = null;
+            pendingNewButtonId = null;
         } catch (error) {
             showToast('保存失败: ' + error.message);
+            // 失败时不要清 pendingNewButtonId，方便用户重试依然幂等
+        } finally {
+            isSavingButton = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = prevSaveBtnText || '保存';
+            }
         }
     };
 
@@ -2038,6 +2114,18 @@ function removeCountdownBar(buttonElement) {
     };
 
     window.saveMouseButton = async function() {
+        if (isSavingMouseButton) {
+            return;
+        }
+        isSavingMouseButton = true;
+
+        const mouseSaveBtn = document.querySelector('#mouseConfigForm .save-button');
+        const prevMouseSaveText = mouseSaveBtn ? mouseSaveBtn.textContent : null;
+        if (mouseSaveBtn) {
+            mouseSaveBtn.disabled = true;
+            mouseSaveBtn.textContent = '保存中...';
+        }
+
         Logger.log('saveMouseButton 被调用');
         
         const modeElem = document.getElementById('mouseConfigMode');
@@ -2052,6 +2140,11 @@ function removeCountdownBar(buttonElement) {
         // 验证快捷键
         if (!shortcut) {
             showToast('请输入要映射的快捷键');
+            isSavingMouseButton = false;
+            if (mouseSaveBtn) {
+                mouseSaveBtn.disabled = false;
+                mouseSaveBtn.textContent = prevMouseSaveText || '保存';
+            }
             return;
         }
         
@@ -2062,6 +2155,11 @@ function removeCountdownBar(buttonElement) {
         // 验证快捷键格式
         if (!CONFIG.REGEX.SHORTCUT.test(normalizedShortcut)) {
             showToast('快捷键格式不正确，请使用小写字母和+分隔，例如：ctrl+v');
+            isSavingMouseButton = false;
+            if (mouseSaveBtn) {
+                mouseSaveBtn.disabled = false;
+                mouseSaveBtn.textContent = prevMouseSaveText || '保存';
+            }
             return;
         }
         
@@ -2086,6 +2184,11 @@ function removeCountdownBar(buttonElement) {
             // 序列模式
             if (currentSequenceKeys.length < 2) {
                 showToast('序列模式至少需要添加2个按键');
+                isSavingMouseButton = false;
+                if (mouseSaveBtn) {
+                    mouseSaveBtn.disabled = false;
+                    mouseSaveBtn.textContent = prevMouseSaveText || '保存';
+                }
                 return;
             }
             
@@ -2128,6 +2231,12 @@ function removeCountdownBar(buttonElement) {
         } catch (error) {
             Logger.error('保存失败:', error);
             showToast('保存失败: ' + error.message);
+        } finally {
+            isSavingMouseButton = false;
+            if (mouseSaveBtn) {
+                mouseSaveBtn.disabled = false;
+                mouseSaveBtn.textContent = prevMouseSaveText || '保存';
+            }
         }
     };
 

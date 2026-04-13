@@ -10,6 +10,7 @@ import sys
 import json
 from datetime import datetime
 from typing import List, Dict, Optional
+import uuid
 
 # 添加父目录到路径以导入 config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -112,9 +113,24 @@ def add_button(button_data: Dict) -> Dict:
     """添加新按钮"""
     buttons = load_buttons()
     
-    # 确保有ID
-    if "id" not in button_data:
-        button_data["id"] = f"btn_{int(datetime.now().timestamp() * 1000)}_{hash(button_data.get('name', '')) % 10000}"
+    # 幂等新增：如果客户端提供了 id 且已存在，则视为 upsert（更新并返回），避免重复追加
+    provided_id = button_data.get("id")
+    if provided_id:
+        for i, btn in enumerate(buttons):
+            if btn.get("id") == provided_id:
+                now = datetime.now().isoformat()
+                updated_button = {**btn, **button_data}
+                updated_button["id"] = provided_id
+                updated_button["updated_at"] = now
+                # 保留 created_at
+                if "created_at" not in updated_button:
+                    updated_button["created_at"] = btn.get("created_at") or now
+                buttons[i] = updated_button
+                save_buttons(buttons)
+                return updated_button
+    else:
+        # 确保有ID（服务端生成，尽量避免碰撞）
+        button_data["id"] = f"btn_{uuid.uuid4().hex}"
     
     # 添加时间戳
     now = datetime.now().isoformat()

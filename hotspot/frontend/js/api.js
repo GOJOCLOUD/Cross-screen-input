@@ -58,6 +58,10 @@ const RequestManager = {
                 // 缓存GET请求
                 if (method === 'GET') {
                     this.cache.set(key, { data, time: Date.now() });
+                } else {
+                    // 写操作成功后：清理 GET 缓存，确保列表/按钮栏实时刷新
+                    // 这能避免“保存成功但界面仍显示旧数据 → 用户误以为没保存 → 连点导致重复新增”
+                    this.cache.clear();
                 }
                 return data;
             })
@@ -72,6 +76,10 @@ const RequestManager = {
             this.pending.set(key, promise);
         }
         return promise;
+    },
+
+    clearCache() {
+        this.cache.clear();
     }
 };
 
