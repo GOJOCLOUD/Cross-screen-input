@@ -7,15 +7,17 @@ const RequestManager = {
     cacheTime: CONFIG.VALIDATION.CACHE_TIME,  // 5分钟
     
     async request(url, options = {}) {
-        const key = `${options.method || 'GET'}_${url}`;
-        
-        // 检查是否有相同请求正在进行
-        if (this.pending.has(key)) {
+        const method = options.method || 'GET';
+        const key = `${method}_${url}`;
+
+        // 仅合并「进行中的 GET」：POST/PUT 等若用同一 URL 去重，会导致快捷键连点、鼠标连击
+        // 共用一个 Promise，后续请求被吞或拿到错误结果；弱网下重试也会互相干扰。
+        if (method === 'GET' && this.pending.has(key)) {
             return this.pending.get(key);
         }
         
         // 检查缓存
-        if (options.method === 'GET' && this.cache.has(key)) {
+        if (method === 'GET' && this.cache.has(key)) {
             const cached = this.cache.get(key);
             if (Date.now() - cached.time < this.cacheTime) {
                 return cached.data;
@@ -31,7 +33,9 @@ const RequestManager = {
         
         const promise = fetch(url, fetchOptions)
             .then(response => {
-                this.pending.delete(key);
+                if (method === 'GET') {
+                    this.pending.delete(key);
+                }
                 if (!response.ok) {
                     // 检查是否是拦截响应
                     if (response.status === 403) {
@@ -52,17 +56,21 @@ const RequestManager = {
             })
             .then(data => {
                 // 缓存GET请求
-                if (options.method === 'GET') {
+                if (method === 'GET') {
                     this.cache.set(key, { data, time: Date.now() });
                 }
                 return data;
             })
             .catch(error => {
-                this.pending.delete(key);
+                if (method === 'GET') {
+                    this.pending.delete(key);
+                }
                 throw error;
             });
-        
-        this.pending.set(key, promise);
+
+        if (method === 'GET') {
+            this.pending.set(key, promise);
+        }
         return promise;
     }
 };
