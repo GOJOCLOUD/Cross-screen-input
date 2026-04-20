@@ -137,6 +137,10 @@ jobs:
           cp -R "${bin_dir}/." electron/resources/backend/
           rm -f electron/resources/backend/.gitkeep
 
+      - name: Sanitize backend bundle (exclude keys / issuer / junk)
+        shell: bash
+        run: bash scripts/prune_backend_bundle.sh electron/resources/backend
+
       - name: Prepare non-infringing app icon (80% scale)
         shell: bash
         run: |
@@ -358,19 +362,16 @@ jobs:
           cp -R "${bin_dir}/." electron/resources/backend/
           rm -f electron/resources/backend/.gitkeep
 
+      - name: Sanitize backend bundle (exclude keys / issuer / junk)
+        shell: bash
+        run: bash scripts/prune_backend_bundle.sh electron/resources/backend
+
       - name: Prepare Windows app icon (.ico)
         shell: bash
         run: |
           mkdir -p electron/build
-          src="hotspot/images/app-icon-1080x1080.png"
-          test -f "${src}"
-          python3 - <<'PY'
-          from PIL import Image
-          src = Image.open("hotspot/images/app-icon-1080x1080.png").convert("RGBA")
-          icon = src.resize((256, 256), Image.LANCZOS)
-          icon.save("electron/build/icon.ico", sizes=[(256, 256)])
-          PY
-          ls -la electron/build
+          python3 scripts/gen_windows_icon.py
+          ls -la electron/build/icon.ico
 
       - name: Install Electron deps
         shell: bash

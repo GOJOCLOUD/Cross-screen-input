@@ -163,9 +163,9 @@ function getBackendEnv() {
     KPSR_PORT: String(backendPort),
     KPSR_INSTANCE_TOKEN: launchInstanceToken,
   };
-  // 安装包内默认试用 30 秒（与云打包产物一致）；本地开发跑源码后端不受影响；可用环境变量覆盖
+  // 安装包内默认试用 7 天（604800 秒）；本地开发不受影响；可用环境变量覆盖
   if (app.isPackaged && !(String(process.env.KPSR_TRIAL_SECONDS || '').trim())) {
-    env.KPSR_TRIAL_SECONDS = '30';
+    env.KPSR_TRIAL_SECONDS = String(7 * 24 * 60 * 60);
   }
   return env;
 }

@@ -21,7 +21,9 @@ router = APIRouter()
 
 # ===== Trial / Free usage (offline) =====
 # 默认试用秒数（安装包常配合 KPSR_TRIAL_SECONDS）。可用环境变量覆盖。
-DEFAULT_TRIAL_SECONDS = 30
+# 默认试用时长：7 天（安装包内 Electron 主进程常注入 KPSR_TRIAL_SECONDS 与本处保持一致）
+SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_TRIAL_SECONDS = SEVEN_DAYS_SECONDS
 TRIAL_SECONDS_ENV_KEYS = ("KPSR_TRIAL_SECONDS", "KPSR_TRIAL_SECS")
 TRIAL_CLOCK_ROLLBACK_TOLERANCE_SECONDS = 2
 

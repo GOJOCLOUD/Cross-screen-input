@@ -16,3 +16,6 @@ electron/dist/
 
 # 激活码签发私钥（勿提交；脚本在 scripts/ 可入库，私钥仅本机备份）
 activation_ed25519_private.pem
+
+# 本地误生成的构建日志勿提交
+/error.txt
