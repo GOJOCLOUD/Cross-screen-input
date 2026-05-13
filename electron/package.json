@@ -67,6 +67,11 @@
         }
       ],
       "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "deleteAppDataOnUninstall": true,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }
